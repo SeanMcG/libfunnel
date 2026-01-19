@@ -84,7 +84,7 @@ int funnel_stream_vk_add_format(struct funnel_stream *stream, VkFormat format,
  * callback is used (if you use buffer callbacks).
  *
  * @param buf Buffer
- * @param bo Output EGLImage for the buffer (borrowed)
+ * @param bo Output VkImage for the buffer (borrowed)
  */
 int funnel_buffer_get_vk_image(struct funnel_buffer *buf, VkImage *image);
 
