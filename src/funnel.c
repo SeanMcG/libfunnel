@@ -478,6 +478,8 @@ static void on_command(void *data, const struct spa_command *command) {
     switch (SPA_NODE_COMMAND_ID(command)) {
     case SPA_NODE_COMMAND_RequestProcess:
         fprintf(stderr, "TRIGGER %p\n", stream);
+        if (!pw_stream_is_lazy(stream->stream))
+            return;
         pw_stream_trigger_process(stream->stream);
         break;
     default:
