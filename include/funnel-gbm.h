@@ -21,9 +21,8 @@ int funnel_stream_init_gbm(struct funnel_stream *stream, int gbm_fd);
  * @param modifiers Pointer to a list of modifiers (borrow)
  * @param num_modifiers Number of modifiers passed
  */
-int funnel_stream_gbm_add_format(struct funnel_stream *stream,
-                                    uint32_t format, uint64_t *modifiers,
-                                    size_t num_modifiers);
+int funnel_stream_gbm_add_format(struct funnel_stream *stream, uint32_t format,
+                                 uint64_t *modifiers, size_t num_modifiers);
 
 /**
  * Get the GBM buffer object for a Funnel buffer.
@@ -35,3 +34,50 @@ int funnel_stream_gbm_add_format(struct funnel_stream *stream,
  * @param bo Output GBM BO for the buffer (borrowed)
  */
 int funnel_buffer_get_gbm_bo(struct funnel_buffer *buf, struct gbm_bo **bo);
+
+/**
+ * Get the sync object and point for acquiring the buffer.
+ *
+ * The user must wait on this timeline sync object point before accessing
+ * the buffer.
+ *
+ * @param buf Buffer
+ * @param handle Output acquire DRM sync object handle
+ * @param point Output acquire DRM sync object point
+ */
+int funnel_buffer_get_acquire_sync_object(struct funnel_buffer *buf,
+                                          uint32_t *handle, uint64_t *point);
+
+/**
+ * Get the sync object and point for releasing the buffer.
+ *
+ * The user must signal this timeline sync object after
+ * access to the buffer is complete.
+ *
+ * @param buf Buffer
+ * @param handle Output release DRM sync object handle
+ * @param point Output release DRM sync object point
+ */
+int funnel_buffer_get_release_sync_object(struct funnel_buffer *buf,
+                                          uint32_t *handle, uint64_t *point);
+
+/**
+ * Get the sync object and point for acquiring the buffer.
+ *
+ * The user must wait on this sync file before accessing
+ * the buffer.
+ *
+ * @param buf Buffer
+ * @param fd Output sync file fd for buffer acquisition (owned by the caller)
+ */
+int funnel_buffer_get_acquire_sync_file(struct funnel_buffer *buf, int *fd);
+
+/**
+ * Set the sync file for releasing the buffer.
+ *
+ * This sync file must be signaled when access to the buffer is complete.
+ *
+ * @param buf Buffer
+ * @param fd DRM sync file signaled on release (borrowed)
+ */
+int funnel_buffer_set_release_sync_file(struct funnel_buffer *buf, int fd);

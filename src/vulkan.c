@@ -1,5 +1,6 @@
 #include "funnel-gbm.h"
 #include "funnel-vk.h"
+#include "funnel.h"
 #include "funnel_internal.h"
 
 #include <assert.h>
@@ -234,7 +235,8 @@ void funnel_vk_alloc_buffer(struct funnel_buffer *buffer) {
     VkMemoryRequirements2 mem_reqs = {
         .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,
     };
-    vks->vkGetImageMemoryRequirements2KHR(vks->device, &mem_reqs_info, &mem_reqs);
+    vks->vkGetImageMemoryRequirements2KHR(vks->device, &mem_reqs_info,
+                                          &mem_reqs);
 
     VkMemoryFdPropertiesKHR fd_props = {
         .sType = VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR,
@@ -380,7 +382,8 @@ int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
         (PFN_vkGetImageMemoryRequirements2KHR)vkGetInstanceProcAddr(
             instance, "vkGetImageMemoryRequirements2KHR");
 
-    if (!vkGetPhysicalDeviceProperties2KHR || !vkGetMemoryFdPropertiesKHR || !vkGetImageMemoryRequirements2KHR) {
+    if (!vkGetPhysicalDeviceProperties2KHR || !vkGetMemoryFdPropertiesKHR ||
+        !vkGetImageMemoryRequirements2KHR) {
         fprintf(stderr, "Missing extensions\n");
         return -ENODEV;
     }
@@ -426,9 +429,19 @@ int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
     vks->vkGetMemoryFdPropertiesKHR = vkGetMemoryFdPropertiesKHR;
     vks->vkGetImageMemoryRequirements2KHR = vkGetImageMemoryRequirements2KHR;
 
+    ret = funnel_stream_set_sync(stream, FUNNEL_SYNC_EXPLICIT_HYBRID);
+    if (ret < 0) {
+        fprintf(stderr,
+                "Vulkan requires explicit sync, but the driver does not "
+                "support it?\n");
+        return ret;
+    }
+
     stream->funcs = &vk_funcs;
     stream->api = API_VULKAN;
     stream->api_ctx = vks;
+    stream->api_supports_explicit_sync = true;
+    stream->api_requires_explicit_sync = true;
 
     return 0;
 }

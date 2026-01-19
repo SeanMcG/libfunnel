@@ -108,6 +108,66 @@ enum funnel_mode {
 };
 
 /**
+ * Buffer synchronization modes for frames
+ */
+enum funnel_sync {
+    /**
+     * Use implicit buffer sync only.
+     *
+     * This will only advertise implicit sync on
+     * the PipeWire stream. The other end must
+     * support implicit sync.
+     *
+     * Explicit sync APIs are not available on
+     * buffers.
+     *
+     * Not available for Vulkan. Does not work on
+     * the NVidia proprietary driver.
+     */
+    FUNNEL_SYNC_IMPLICIT,
+
+    /**
+     * Use explicit buffer sync, with automatic
+     * conversion to implicit sync.
+     *
+     * Advertise both implicit and explicit
+     * sync, and negotiate automatically depending
+     * on the capabilities of the other end.
+     *
+     * You must use explicit sync APIs to
+     * synchronize buffer access.
+     */
+    FUNNEL_SYNC_EXPLICIT_HYBRID,
+    /**
+     * Use explicit buffer sync only.
+     *
+     * This will only advertise explicit sync on
+     * the PipeWire stream. The other end must
+     * support explicit sync, or else stream
+     * negotiation will fail.
+     *
+     * You must use explicit sync APIs to
+     * synchronize buffer access.
+     */
+    FUNNEL_SYNC_EXPLICIT_ONLY,
+    /**
+     * Support both explicit and implicit sync.
+     *
+     * Advertise both implicit and explicit
+     * sync, and negotiate automatically depending
+     * on the capabilities of the other end.
+     *
+     * You must query the sync type for each
+     * dequeued funnel_buffer, and use explicit
+     * sync APIs if the buffer has explicit sync
+     * enabled.
+     *
+     * Not available for Vulkan.
+     */
+    FUNNEL_SYNC_EITHER,
+};
+
+/**
  * Create a Funnel context.
  *
  * @param ctx New context
@@ -161,6 +221,14 @@ int funnel_stream_set_size(struct funnel_stream *stream, uint32_t width,
  * @param mode Queueing mode for the stream
  */
 int funnel_stream_set_mode(struct funnel_stream *stream, enum funnel_mode mode);
+
+/**
+ * Configure the synchronization mode for the stream.
+ *
+ * @param stream Stream
+ * @param mode Synchronization mode for the stream
+ */
+int funnel_stream_set_sync(struct funnel_stream *stream, enum funnel_sync sync);
 
 /**
  * Set the frame rate of a stream.
@@ -289,3 +357,10 @@ void funnel_buffer_set_user_data(struct funnel_buffer *buf, void *opaque);
  * @param buf Buffer
  */
 void *funnel_buffer_get_user_data(struct funnel_buffer *buf);
+
+/**
+ * Check whether a buffer requires explicit synchronization.
+ *
+ * @param buf Buffer
+ */
+bool funnel_buffer_has_sync(struct funnel_buffer *buf);

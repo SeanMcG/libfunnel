@@ -4,16 +4,24 @@ includes = include_directories('include')
 
 pipewire = dependency('libpipewire-0.3')
 gbm = dependency('gbm')
+drm = dependency('libdrm')
 egl = dependency('egl')
 vulkan = dependency('vulkan')
 
+compiler = meson.get_compiler('c')
+has_linux_headers = compiler.has_header('linux/dma-buf.h')
+
+if not has_linux_headers
+    error('Missing linux-headers package')
+endif
+
 lib_funnel = library('funnel', 'src/funnel.c',
-    dependencies: [gbm, egl, pipewire],
+    dependencies: [gbm, drm, pipewire],
     include_directories : includes)
 funnel = declare_dependency(link_with : lib_funnel, include_directories : includes)
 
 lib_funnel_egl = library('funnel-egl', 'src/egl.c', dependencies: [funnel, pipewire, egl, gbm])
-lib_funnel_vk = library('funnel-vk', 'src/vulkan.c', dependencies: [funnel, pipewire, vulkan, gbm])
+lib_funnel_vk = library('funnel-vk', 'src/vulkan.c', dependencies: [funnel, pipewire, vulkan, gbm, drm])
 
 funnel_egl = declare_dependency(link_with : lib_funnel_egl, include_directories : includes)
 funnel_vk = declare_dependency(link_with : lib_funnel_vk, include_directories : includes)

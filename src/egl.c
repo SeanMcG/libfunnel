@@ -132,6 +132,9 @@ int funnel_stream_init_egl(struct funnel_stream *stream, EGLDisplay display) {
     stream->api = API_EGL;
     stream->api_ctx = display;
 
+    stream->api_supports_explicit_sync = false;
+    stream->api_requires_explicit_sync = false;
+
     return 0;
 }
 

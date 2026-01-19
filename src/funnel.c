@@ -1,4 +1,5 @@
 #include "funnel.h"
+#include "funnel-gbm.h"
 #include "funnel_internal.h"
 #include "pipewire/stream.h"
 
@@ -24,7 +25,9 @@
 #include <spa/utils/result.h>
 
 #include <gbm.h>
+#include <linux/dma-buf.h>
 #include <pipewire/pipewire.h>
+#include <xf86drm.h>
 
 static struct {
     uint32_t drm_format;
@@ -65,6 +68,13 @@ static struct {
 };
 
 ///////////////////////////////////////////////
+
+static int funnel_stream_import_sync_file(struct funnel_stream *stream,
+                                          uint32_t handle, int fd,
+                                          uint64_t point);
+static int funnel_stream_export_sync_file(struct funnel_stream *stream,
+                                          uint32_t handle, uint64_t point,
+                                          int *fd);
 
 static void free_params(const struct spa_pod **params, size_t count) {
     for (size_t i = 0; i < count; i++)
@@ -112,6 +122,24 @@ static void on_add_buffer(void *data, struct pw_buffer *pwbuffer) {
     buffer->stream = stream;
     buffer->bo = bo;
 
+    buffer->backend_sync = false; // TODO
+
+    buffer->frontend_sync = buffer->backend_sync;
+    if (!buffer->backend_sync &&
+        stream->cur.config.sync == FUNNEL_SYNC_EXPLICIT_HYBRID) {
+        int fd = gbm_device_get_fd(stream->gbm);
+
+        int ret = drmSyncobjCreate(fd, 0, &buffer->acquire.handle);
+        assert(ret >= 0);
+
+        ret = drmSyncobjCreate(fd, 0, &buffer->release.handle);
+        assert(ret >= 0);
+
+        buffer->acquire.point = 0;
+        buffer->release.point = 0;
+        buffer->frontend_sync = true;
+    }
+
     fprintf(stderr, "on_add_buffer: %p -> %p\n", pwbuffer, buffer);
 
     for (int i = 0; i < ARRAY_SIZE(buffer->fds); i++) {
@@ -154,6 +182,16 @@ static void funnel_buffer_free(struct funnel_buffer *buffer) {
     for (int i = 0; i < ARRAY_SIZE(buffer->fds); i++) {
         if (buffer->fds[i] >= 0)
             close(buffer->fds[i]);
+    }
+
+    if (!buffer->backend_sync &&
+        stream->cur.config.sync == FUNNEL_SYNC_EXPLICIT_HYBRID) {
+        int fd = gbm_device_get_fd(stream->gbm);
+
+        int ret = drmSyncobjDestroy(fd, buffer->acquire.handle);
+        assert(ret >= 0);
+        ret = drmSyncobjDestroy(fd, buffer->release.handle);
+        assert(ret >= 0);
     }
 
     free(buffer);
@@ -656,6 +694,7 @@ int funnel_stream_create(struct funnel_ctx *ctx, const char *name,
     stream->name = strdup(name);
 
     funnel_stream_set_mode(stream, FUNNEL_ASYNC);
+    funnel_stream_set_sync(stream, FUNNEL_SYNC_IMPLICIT);
 
     stream->config.rate.def = FUNNEL_RATE_VARIABLE;
     stream->config.rate.min = FUNNEL_RATE_VARIABLE;
@@ -691,11 +730,51 @@ int funnel_stream_init_gbm(struct funnel_stream *stream, int gbm_fd) {
     if (stream->api != API_UNSET)
         return -EEXIST;
 
-    stream->gbm = gbm_create_device(gbm_fd);
+    int fd = fcntl(gbm_fd, F_DUPFD_CLOEXEC, 0);
+    assert(fd >= 0);
+
+    stream->gbm = gbm_create_device(fd);
     if (!stream->gbm)
         return -EINVAL;
 
+    stream->gbm_timeline_sync = false;
+
+    uint64_t cap;
+    int ret = drmGetCap(fd, DRM_CAP_SYNCOBJ_TIMELINE, &cap);
+    stream->gbm_timeline_sync = cap && !ret;
+    stream->gbm_timeline_sync_import_export = false;
+
+#ifdef DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_TIMELINE
+    if (stream->gbm_timeline_sync) {
+
+        // Test for DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_TIMELINE support
+        struct drm_syncobj_handle args = {
+            .handle = 0, // invalid
+            .flags = DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_EXPORT_SYNC_FILE |
+                     DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_TIMELINE,
+        };
+
+        ret = drmIoctl(fd, DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD, &args);
+
+        assert(ret == -1);
+        if (errno == ENOENT) {
+            // Syncobj does not exist, but flags are supported
+            stream->gbm_timeline_sync_import_export = true;
+        } else {
+            // Create a dummy syncobj to use for transfers
+            int ret = drmSyncobjCreate(fd, 0, &stream->dummy_syncobj);
+            assert(ret >= 0);
+        }
+    }
+
+    fprintf(stderr, "GBM features: fd=%d timeline_sync=%d, import_export=%d\n",
+            fd, stream->gbm_timeline_sync,
+            stream->gbm_timeline_sync_import_export);
+#endif
+
     stream->api = API_GBM;
+    stream->api_supports_explicit_sync = stream->gbm_timeline_sync;
+    stream->api_requires_explicit_sync = false;
     return 0;
 }
 
@@ -818,6 +897,35 @@ int funnel_stream_set_mode(struct funnel_stream *stream,
     stream->config.mode = mode;
     stream->config_pending = true;
 
+    return 0;
+}
+
+int funnel_stream_set_sync(struct funnel_stream *stream,
+                           enum funnel_sync sync) {
+    if (sync == FUNNEL_SYNC_EXPLICIT_ONLY)
+        return -EOPNOTSUPP; // TODO
+
+    switch (sync) {
+    case FUNNEL_SYNC_EITHER:
+        // It is legal to request this if the API does not support
+        // explicit sync (EGL without the right extension). In that
+        // case, it is converted to IMPLICIT.
+        if (!stream->api_supports_explicit_sync)
+            sync = FUNNEL_SYNC_IMPLICIT;
+        // Fallthrough
+    case FUNNEL_SYNC_IMPLICIT:
+        if (stream->api_requires_explicit_sync)
+            return -EOPNOTSUPP;
+        break;
+    case FUNNEL_SYNC_EXPLICIT_HYBRID:
+    case FUNNEL_SYNC_EXPLICIT_ONLY:
+        if (!stream->api_supports_explicit_sync)
+            return -EOPNOTSUPP;
+        break;
+    }
+
+    stream->config.sync = sync;
+    stream->config_pending = true;
     return 0;
 }
 
@@ -1020,8 +1128,17 @@ void funnel_stream_destroy(struct funnel_stream *stream) {
     struct funnel_ctx *ctx = stream->ctx;
     pw_thread_loop_lock(ctx->loop);
 
-    if (stream->gbm)
+    if (stream->dummy_syncobj) {
+        int fd = gbm_device_get_fd(stream->gbm);
+        int ret = drmSyncobjDestroy(fd, stream->dummy_syncobj);
+        assert(ret == 0);
+    }
+
+    if (stream->gbm) {
+        int fd = gbm_device_get_fd(stream->gbm);
         gbm_device_destroy(stream->gbm);
+        close(fd);
+    }
 
     funnel_free_formats(&stream->config.formats);
     funnel_free_formats(&stream->cur.config.formats);
@@ -1127,6 +1244,10 @@ int funnel_stream_dequeue(struct funnel_stream *stream,
     stream->buffers_dequeued++;
     buf->dequeued = true;
 
+    buf->acquire.queried = false;
+    buf->release.queried = false;
+    buf->release_sync_file_set = false;
+
     *pbuf = buf;
 
     UNLOCK_RETURN(0);
@@ -1203,6 +1324,39 @@ static int funnel_stream_enqueue_internal(struct funnel_stream *stream,
 
 int funnel_stream_enqueue(struct funnel_stream *stream,
                           struct funnel_buffer *buf) {
+    if (buf->frontend_sync) {
+        if (!buf->release.queried || !buf->acquire.queried) {
+            fprintf(stderr, "Attempted to enqueue buffer without sync, but "
+                            "sync is in use\n");
+            return -EINVAL;
+        }
+
+        if (!buf->backend_sync && !buf->release_sync_file_set) {
+            int fd = -1;
+
+            int ret = funnel_stream_export_sync_file(
+                buf->stream, buf->release.handle, buf->release.point, &fd);
+            if (ret) {
+                fprintf(stderr,
+                        "Failed to export sync, did you commmit the timeline "
+                        "point? (handle = %d, point=%lld)\n",
+                        buf->release.handle, (long long)buf->release.point);
+                return -errno;
+            }
+            assert(fd >= 0);
+
+            buf->release.point++;
+
+            struct dma_buf_import_sync_file args = {
+                .flags = DMA_BUF_SYNC_WRITE,
+                .fd = fd,
+            };
+
+            ret = drmIoctl(buf->fds[0], DMA_BUF_IOCTL_IMPORT_SYNC_FILE, &args);
+            assert(ret >= 0);
+            close(args.fd);
+        }
+    }
 
     return funnel_stream_enqueue_internal(stream, buf, true);
 }
@@ -1246,4 +1400,193 @@ void funnel_buffer_set_user_data(struct funnel_buffer *buf, void *opaque) {
 
 void *funnel_buffer_get_user_data(struct funnel_buffer *buf) {
     return buf->opaque;
+}
+
+bool funnel_buffer_has_sync(struct funnel_buffer *buf) {
+    return buf->frontend_sync;
+}
+
+int funnel_buffer_get_acquire_sync_object(struct funnel_buffer *buf,
+                                          uint32_t *handle, uint64_t *point) {
+    if (!buf->frontend_sync)
+        return -EINVAL;
+
+    *handle = buf->acquire.handle;
+    *point = buf->acquire.point;
+
+    if (!buf->backend_sync) {
+        struct dma_buf_export_sync_file args = {
+            .flags = DMA_BUF_SYNC_RW,
+            .fd = -1,
+        };
+
+        int ret = drmIoctl(buf->fds[0], DMA_BUF_IOCTL_EXPORT_SYNC_FILE, &args);
+        assert(ret >= 0);
+
+        ret = funnel_stream_import_sync_file(buf->stream, buf->acquire.handle,
+                                             args.fd, buf->acquire.point);
+        assert(ret >= 0);
+        buf->acquire.point++;
+        close(args.fd);
+    }
+
+    buf->acquire.queried = true;
+    return 0;
+}
+
+int funnel_buffer_get_release_sync_object(struct funnel_buffer *buf,
+                                          uint32_t *handle, uint64_t *point) {
+    if (!buf->frontend_sync)
+        return -EINVAL;
+
+    if (buf->release_sync_file_set) {
+        fprintf(stderr, "Cannot mix sync file and sync object APIs\n");
+        return -EINVAL;
+    }
+
+    *handle = buf->release.handle;
+    *point = buf->release.point;
+
+    buf->release.queried = true;
+    return 0;
+}
+
+int funnel_buffer_get_acquire_sync_file(struct funnel_buffer *buf, int *fd) {
+    *fd = -1;
+
+    if (!buf->backend_sync) {
+        struct dma_buf_export_sync_file args = {
+            .flags = DMA_BUF_SYNC_RW,
+            .fd = -1,
+        };
+
+        int ret = drmIoctl(buf->fds[0], DMA_BUF_IOCTL_EXPORT_SYNC_FILE, &args);
+        assert(ret >= 0);
+
+        *fd = args.fd;
+    } else {
+        int gbm_fd = gbm_device_get_fd(buf->stream->gbm);
+        int ret = drmSyncobjTimelineWait(
+            gbm_fd, &buf->acquire.handle, &buf->acquire.point, 1, INT64_MAX,
+            DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE, NULL);
+        if (ret < 0)
+            return -errno;
+
+        ret = funnel_stream_export_sync_file(buf->stream, buf->acquire.handle,
+                                             buf->acquire.point, fd);
+        if (ret < 0)
+            return ret;
+    }
+
+    buf->acquire.queried = true;
+    return 0;
+}
+
+int funnel_buffer_set_release_sync_file(struct funnel_buffer *buf, int fd) {
+    if (!buf->frontend_sync)
+        return -EINVAL;
+
+    if (!buf->release_sync_file_set && buf->release.queried) {
+        fprintf(stderr, "Cannot mix sync file and sync object APIs\n");
+        return -EINVAL;
+    }
+
+    if (!buf->backend_sync) {
+        struct dma_buf_import_sync_file args = {
+            .flags = DMA_BUF_SYNC_WRITE,
+            .fd = fd,
+        };
+
+        int ret = drmIoctl(buf->fds[0], DMA_BUF_IOCTL_IMPORT_SYNC_FILE, &args);
+        assert(ret >= 0);
+    } else {
+        int ret = funnel_stream_import_sync_file(
+            buf->stream, buf->release.handle, fd, buf->release.point);
+        if (ret < 0)
+            return ret;
+    }
+
+    buf->release_sync_file_set = true;
+    buf->release.queried = true;
+    return 0;
+}
+
+static int funnel_stream_import_sync_file(struct funnel_stream *stream,
+                                          uint32_t handle, int fd,
+                                          uint64_t point) {
+    struct drm_syncobj_handle args = {
+        .flags = DRM_SYNCOBJ_FD_TO_HANDLE_FLAGS_IMPORT_SYNC_FILE,
+        .fd = fd,
+    };
+
+    int ret;
+    int gbm_fd = gbm_device_get_fd(stream->gbm);
+
+    if (fd < 0 || !handle)
+        return -EINVAL;
+
+#ifdef DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_TIMELINE
+    if (stream->gbm_timeline_sync_import_export) {
+        args.flags |= DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_TIMELINE;
+        args.handle = handle;
+        args.point = point;
+    } else
+#endif
+    {
+        assert(stream->dummy_syncobj);
+        args.handle = stream->dummy_syncobj;
+    }
+
+    ret = drmIoctl(gbm_fd, DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE, &args);
+    if (ret < 0)
+        return -errno;
+
+    if (!stream->gbm_timeline_sync_import_export) {
+        ret = drmSyncobjTransfer(gbm_fd, handle, point, stream->dummy_syncobj,
+                                 0, 0);
+        if (ret < 0)
+            return -errno;
+    }
+
+    return 0;
+}
+
+static int funnel_stream_export_sync_file(struct funnel_stream *stream,
+                                          uint32_t handle, uint64_t point,
+                                          int *fd) {
+    struct drm_syncobj_handle args = {
+        .flags = DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_EXPORT_SYNC_FILE,
+    };
+
+    int ret;
+    int gbm_fd = gbm_device_get_fd(stream->gbm);
+
+    if (!fd || !handle)
+        return -EINVAL;
+
+    *fd = -1;
+
+#ifdef DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_TIMELINE
+    if (stream->gbm_timeline_sync_import_export) {
+        args.flags |= DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_TIMELINE;
+        args.handle = handle;
+        args.point = point;
+    } else
+#endif
+    {
+        assert(stream->dummy_syncobj);
+        ret = drmSyncobjTransfer(gbm_fd, stream->dummy_syncobj, 0, handle,
+                                 point, 0);
+        if (ret < 0)
+            return -errno;
+
+        args.handle = stream->dummy_syncobj;
+    }
+
+    ret = drmIoctl(gbm_fd, DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD, &args);
+    if (ret < 0)
+        return -errno;
+
+    *fd = args.fd;
+    return 0;
 }

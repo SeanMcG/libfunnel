@@ -35,6 +35,7 @@ struct funnel_format {
 
 struct funnel_stream_config {
     enum funnel_mode mode;
+    enum funnel_sync sync;
 
     struct {
         int def, min, max;
@@ -69,6 +70,12 @@ enum funnel_sync_cycle {
     SYNC_CYCLE_ACTIVE,
 };
 
+struct funnel_sync_point {
+    uint32_t handle;
+    uint64_t point;
+    bool queried;
+};
+
 struct funnel_stream {
     struct funnel_ctx *ctx;
     const char *name;
@@ -79,8 +86,14 @@ struct funnel_stream {
 
     const struct funnel_stream_funcs *funcs;
     void *api_ctx;
+    bool api_supports_explicit_sync;
+    bool api_requires_explicit_sync;
 
     struct gbm_device *gbm;
+    bool gbm_timeline_sync;
+    bool gbm_timeline_sync_import_export;
+    uint32_t dummy_syncobj;
+
     struct spa_hook stream_listener;
     struct pw_stream *stream;
     struct spa_source *timer;
@@ -123,4 +136,10 @@ struct funnel_buffer {
     int fds[6];
     void *api_buf;
     void *opaque;
+
+    bool backend_sync;
+    bool frontend_sync;
+    struct funnel_sync_point acquire;
+    struct funnel_sync_point release;
+    bool release_sync_file_set;
 };
