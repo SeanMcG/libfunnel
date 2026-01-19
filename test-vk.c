@@ -65,6 +65,7 @@ static const char *const deviceExtensionNames[] = {
     "VK_KHR_image_format_list",
     "VK_EXT_image_drm_format_modifier",
     "VK_KHR_get_memory_requirements2",
+    "VK_KHR_external_semaphore",
     "VK_KHR_external_semaphore_fd",
 };
 static const char *const layerNames[] = {"VK_LAYER_KHRONOS_validation"};
