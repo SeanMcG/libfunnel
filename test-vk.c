@@ -48,6 +48,8 @@ static const char *const appName = "Wayland Vulkan Example";
 static const char *const instanceExtensionNames[] = {
     "VK_EXT_debug_utils",
     "VK_KHR_surface",
+    "VK_KHR_get_surface_capabilities2",
+    "VK_EXT_surface_maintenance1",
     "VK_KHR_wayland_surface",
     "VK_KHR_get_physical_device_properties2",
     "VK_KHR_external_memory_capabilities",
@@ -56,6 +58,7 @@ static const char *const instanceExtensionNames[] = {
 
 static const char *const deviceExtensionNames[] = {
     "VK_KHR_swapchain",
+    "VK_EXT_swapchain_maintenance1",
     "VK_KHR_external_memory",
     "VK_KHR_external_memory_fd",
     "VK_EXT_external_memory_dma_buf",
