@@ -1128,23 +1128,10 @@ void funnel_stream_destroy(struct funnel_stream *stream) {
     struct funnel_ctx *ctx = stream->ctx;
     pw_thread_loop_lock(ctx->loop);
 
-    if (stream->dummy_syncobj) {
-        int fd = gbm_device_get_fd(stream->gbm);
-        int ret = drmSyncobjDestroy(fd, stream->dummy_syncobj);
-        assert(ret == 0);
-    }
-
-    if (stream->gbm) {
-        int fd = gbm_device_get_fd(stream->gbm);
-        gbm_device_destroy(stream->gbm);
-        close(fd);
-    }
-
     funnel_free_formats(&stream->config.formats);
     funnel_free_formats(&stream->cur.config.formats);
 
     if (stream->stream) {
-        spa_hook_remove(&stream->stream_listener);
         pw_stream_disconnect(stream->stream);
         pw_stream_destroy(stream->stream);
     }
@@ -1158,6 +1145,18 @@ void funnel_stream_destroy(struct funnel_stream *stream) {
         stream->funcs->destroy(stream);
 
     pw_thread_loop_unlock(ctx->loop);
+
+    if (stream->dummy_syncobj) {
+        int fd = gbm_device_get_fd(stream->gbm);
+        int ret = drmSyncobjDestroy(fd, stream->dummy_syncobj);
+        assert(ret == 0);
+    }
+
+    if (stream->gbm) {
+        int fd = gbm_device_get_fd(stream->gbm);
+        gbm_device_destroy(stream->gbm);
+        close(fd);
+    }
 
     free((void *)stream->name);
     free(stream);
