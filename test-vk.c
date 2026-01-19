@@ -46,9 +46,13 @@ struct SwapchainElement {
 
 static const char *const appName = "Wayland Vulkan Example";
 static const char *const instanceExtensionNames[] = {
-    "VK_EXT_debug_utils", "VK_KHR_surface", "VK_KHR_wayland_surface",
+    "VK_EXT_debug_utils",
+    "VK_KHR_surface",
+    "VK_KHR_wayland_surface",
     "VK_KHR_get_physical_device_properties2",
-    "VK_KHR_external_memory_capabilities"};
+    "VK_KHR_external_memory_capabilities",
+    "VK_KHR_external_semaphore_capabilities",
+};
 
 static const char *const deviceExtensionNames[] = {
     "VK_KHR_swapchain",
@@ -60,7 +64,9 @@ static const char *const deviceExtensionNames[] = {
     "VK_KHR_sampler_ycbcr_conversion",
     "VK_KHR_image_format_list",
     "VK_EXT_image_drm_format_modifier",
-    "VK_KHR_get_memory_requirements2"};
+    "VK_KHR_get_memory_requirements2",
+    "VK_KHR_external_semaphore_fd",
+};
 static const char *const layerNames[] = {"VK_LAYER_KHRONOS_validation"};
 static VkInstance instance = VK_NULL_HANDLE;
 static VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
@@ -605,17 +611,20 @@ void loadShader(const uint32_t *buffer, size_t size, VkShaderModule *module) {
 
 int main(int argc, char **argv) {
     enum funnel_mode mode = FUNNEL_ASYNC;
-    VkPresentModeKHR presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+    VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
 
     if (argc > 1 && !strcmp(argv[1], "-async")) {
         mode = FUNNEL_ASYNC;
         presentMode = VK_PRESENT_MODE_FIFO_KHR;
     } else if (argc > 1 && !strcmp(argv[1], "-single")) {
         mode = FUNNEL_SINGLE_BUFFERED;
+        presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
     } else if (argc > 1 && !strcmp(argv[1], "-double")) {
         mode = FUNNEL_DOUBLE_BUFFERED;
+        presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
     } else if (argc > 1 && !strcmp(argv[1], "-sync")) {
         mode = FUNNEL_SYNCHRONOUS;
+        presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
     }
 
     CHECK_WL_RESULT(display = wl_display_connect(NULL));
@@ -1058,18 +1067,28 @@ int main(int argc, char **argv) {
 
         CHECK_VK_RESULT(vkEndCommandBuffer(element->commandBuffer));
 
-        const VkPipelineStageFlags waitStage =
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        const VkPipelineStageFlags waitStage[2] = {
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+
+        VkSemaphore wait_semaphores[2] = {currentElement->startSemaphore};
+        VkSemaphore signal_semaphores[2] = {currentElement->endSemaphore};
+
+        if (buf) {
+            ret = funnel_buffer_get_vk_semaphores(buf, &wait_semaphores[1],
+                                                  &signal_semaphores[1]);
+            assert(ret == 0);
+        }
 
         VkSubmitInfo submitInfo = {0};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submitInfo.waitSemaphoreCount = 1;
-        submitInfo.pWaitSemaphores = &currentElement->startSemaphore;
-        submitInfo.pWaitDstStageMask = &waitStage;
+        submitInfo.waitSemaphoreCount = buf ? 2 : 1;
+        submitInfo.pWaitSemaphores = wait_semaphores;
+        submitInfo.pWaitDstStageMask = waitStage;
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &element->commandBuffer;
-        submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = &currentElement->endSemaphore;
+        submitInfo.signalSemaphoreCount = buf ? 2 : 1;
+        submitInfo.pSignalSemaphores = signal_semaphores;
 
         CHECK_VK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 
@@ -1114,7 +1133,17 @@ int main(int argc, char **argv) {
 
     CHECK_VK_RESULT(vkDeviceWaitIdle(device));
 
+    ret = funnel_stream_stop(stream);
+    assert(ret == 0);
+
+    funnel_stream_destroy(stream);
+
+    funnel_shutdown(ctx);
+
     destroySwapchain();
+
+    vkDestroyShaderModule(device, vertexShaderModule, NULL);
+    vkDestroyShaderModule(device, fragmentShaderModule, NULL);
 
     vkDestroyCommandPool(device, commandPool, NULL);
     vkDestroyDevice(device, NULL);

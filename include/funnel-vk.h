@@ -82,3 +82,19 @@ int funnel_buffer_get_vk_image(struct funnel_buffer *buf, VkImage *image);
  */
 int funnel_buffer_get_vk_format(struct funnel_buffer *buf, VkFormat *format,
                                 bool *has_alpha);
+
+/**
+ * Get the VkSemaphores for acquiring and releasing the buffer.
+ *
+ * The user must wait on the acquier VkSemaphore object before accessing
+ * the buffer, and signal the release VkSemaphore after accessing the buffer.
+ * These semaphores are valid while the buffer is dequeued.
+ *
+ * @param buf Buffer
+ * @param acquire Output acquire VkSemaphore (valid while the buffer is
+ *                dequeued)
+ * @param release Output release VkSemaphore (valid while the buffer is
+ *                dequeued)
+ */
+int funnel_buffer_get_vk_semaphores(struct funnel_buffer *buf,
+                                    VkSemaphore *acquire, VkSemaphore *release);

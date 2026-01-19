@@ -1255,12 +1255,6 @@ int funnel_stream_dequeue(struct funnel_stream *stream,
 static int funnel_stream_enqueue_internal(struct funnel_stream *stream,
                                           struct funnel_buffer *buf,
                                           bool valid) {
-    if (!stream->stream)
-        return -EINVAL;
-    if (!buf)
-        return -EINVAL;
-    assert(buf->stream == stream);
-
     struct funnel_ctx *ctx = stream->ctx;
     pw_thread_loop_lock(ctx->loop);
 
@@ -1324,17 +1318,33 @@ static int funnel_stream_enqueue_internal(struct funnel_stream *stream,
 
 int funnel_stream_enqueue(struct funnel_stream *stream,
                           struct funnel_buffer *buf) {
+    if (!stream->stream)
+        return -EINVAL;
+    if (!buf)
+        return -EINVAL;
+    assert(buf->stream == stream);
+
+    int ret;
+
     if (buf->frontend_sync) {
         if (!buf->release.queried || !buf->acquire.queried) {
             fprintf(stderr, "Attempted to enqueue buffer without sync, but "
                             "sync is in use\n");
             return -EINVAL;
         }
+    }
 
+    if (stream->funcs && stream->funcs->enqueue_buffer) {
+        ret = stream->funcs->enqueue_buffer(buf);
+        if (ret < 0)
+            return ret;
+    }
+
+    if (buf->frontend_sync) {
         if (!buf->backend_sync && !buf->release_sync_file_set) {
             int fd = -1;
 
-            int ret = funnel_stream_export_sync_file(
+            ret = funnel_stream_export_sync_file(
                 buf->stream, buf->release.handle, buf->release.point, &fd);
             if (ret) {
                 fprintf(stderr,

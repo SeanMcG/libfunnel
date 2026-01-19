@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_core.h>
 
@@ -17,11 +18,16 @@ struct funnel_vk_stream {
 
     PFN_vkGetMemoryFdPropertiesKHR vkGetMemoryFdPropertiesKHR;
     PFN_vkGetImageMemoryRequirements2KHR vkGetImageMemoryRequirements2KHR;
+    PFN_vkGetSemaphoreFdKHR vkGetSemaphoreFdKHR;
+    PFN_vkImportSemaphoreFdKHR vkImportSemaphoreFdKHR;
 };
 
 struct funnel_vk_buffer {
     VkImage image;
     VkDeviceMemory mem;
+    VkSemaphore acquire;
+    VkSemaphore release;
+    int last_sync_file;
 };
 
 static uint32_t format_vk_to_gbm(VkFormat format, bool alpha) {
@@ -283,16 +289,89 @@ void funnel_vk_alloc_buffer(struct funnel_buffer *buffer) {
     struct funnel_vk_buffer *vkbuf = calloc(1, sizeof(struct funnel_vk_buffer));
     vkbuf->image = image;
     vkbuf->mem = mem;
+    vkbuf->last_sync_file = -1;
+
+    VkExportSemaphoreCreateInfo export_info = {
+        .sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
+        .handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+    };
+
+    struct VkSemaphoreCreateInfo create_acquire = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+    };
+
+    struct VkSemaphoreCreateInfo create_release = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = &export_info,
+    };
+
+    res =
+        vkCreateSemaphore(vks->device, &create_acquire, NULL, &vkbuf->acquire);
+    assert(res == VK_SUCCESS);
+
+    res =
+        vkCreateSemaphore(vks->device, &create_release, NULL, &vkbuf->release);
+    assert(res == VK_SUCCESS);
 
     buffer->api_buf = vkbuf;
+    assert(funnel_buffer_has_sync(buffer));
+}
+
+static void buffer_wait_idle(struct funnel_vk_buffer *vkbuf) {
+    if (vkbuf->last_sync_file != -1) {
+        struct pollfd pfd = {
+            .fd = vkbuf->last_sync_file,
+            .events = POLLIN,
+        };
+
+        assert(poll(&pfd, 1, -1) == 1);
+        assert(pfd.revents & POLLIN);
+
+        close(vkbuf->last_sync_file);
+        vkbuf->last_sync_file = -1;
+    }
 }
 
 void funnel_vk_free_buffer(struct funnel_buffer *buffer) {
     struct funnel_vk_stream *vks = buffer->stream->api_ctx;
     struct funnel_vk_buffer *vkbuf = buffer->api_buf;
 
+    buffer_wait_idle(vkbuf);
+    vkDestroySemaphore(vks->device, vkbuf->acquire, NULL);
+    vkDestroySemaphore(vks->device, vkbuf->release, NULL);
+
     vkDestroyImage(vks->device, vkbuf->image, NULL);
     vkFreeMemory(vks->device, vkbuf->mem, NULL);
+}
+
+int funnel_vk_enqueue_buffer(struct funnel_buffer *buf) {
+    struct funnel_vk_buffer *vkbuf = buf->api_buf;
+    struct funnel_vk_stream *vks = buf->stream->api_ctx;
+
+    // Checked by caller
+    assert(buf->acquire.queried);
+    assert(buf->release.queried);
+    assert(vkbuf->last_sync_file == -1);
+
+    // Reset for GBM layer to take over
+    buf->release.queried = false;
+
+    VkSemaphoreGetFdInfoKHR info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR,
+        .semaphore = vkbuf->release,
+        .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+    };
+
+    int fd;
+    if (vks->vkGetSemaphoreFdKHR(vks->device, &info, &fd) != VK_SUCCESS) {
+        fprintf(stderr, "Failed to export sync file from semaphore\n");
+        return -EIO;
+    }
+
+    int ret = funnel_buffer_set_release_sync_file(buf, fd);
+    vkbuf->last_sync_file = fd;
+
+    return ret;
 }
 
 int funnel_stream_vk_set_usage(struct funnel_stream *stream,
@@ -355,6 +434,7 @@ int funnel_buffer_get_vk_format(struct funnel_buffer *buf, VkFormat *format,
 static const struct funnel_stream_funcs vk_funcs = {
     .alloc_buffer = funnel_vk_alloc_buffer,
     .free_buffer = funnel_vk_free_buffer,
+    .enqueue_buffer = funnel_vk_enqueue_buffer,
     .destroy = funnel_vk_destroy,
 };
 
@@ -382,8 +462,17 @@ int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
         (PFN_vkGetImageMemoryRequirements2KHR)vkGetInstanceProcAddr(
             instance, "vkGetImageMemoryRequirements2KHR");
 
+    PFN_vkGetSemaphoreFdKHR vkGetSemaphoreFdKHR =
+        (PFN_vkGetSemaphoreFdKHR)vkGetInstanceProcAddr(instance,
+                                                       "vkGetSemaphoreFdKHR");
+
+    PFN_vkImportSemaphoreFdKHR vkImportSemaphoreFdKHR =
+        (PFN_vkImportSemaphoreFdKHR)vkGetInstanceProcAddr(
+            instance, "vkImportSemaphoreFdKHR");
+
     if (!vkGetPhysicalDeviceProperties2KHR || !vkGetMemoryFdPropertiesKHR ||
-        !vkGetImageMemoryRequirements2KHR) {
+        !vkGetImageMemoryRequirements2KHR || !vkGetSemaphoreFdKHR ||
+        !vkImportSemaphoreFdKHR) {
         fprintf(stderr, "Missing extensions\n");
         return -ENODEV;
     }
@@ -428,6 +517,8 @@ int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
 
     vks->vkGetMemoryFdPropertiesKHR = vkGetMemoryFdPropertiesKHR;
     vks->vkGetImageMemoryRequirements2KHR = vkGetImageMemoryRequirements2KHR;
+    vks->vkGetSemaphoreFdKHR = vkGetSemaphoreFdKHR;
+    vks->vkImportSemaphoreFdKHR = vkImportSemaphoreFdKHR;
 
     ret = funnel_stream_set_sync(stream, FUNNEL_SYNC_EXPLICIT_HYBRID);
     if (ret < 0) {
@@ -443,5 +534,42 @@ int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
     stream->api_supports_explicit_sync = true;
     stream->api_requires_explicit_sync = true;
 
+    return 0;
+}
+
+int funnel_buffer_get_vk_semaphores(struct funnel_buffer *buf,
+                                    VkSemaphore *acquire,
+                                    VkSemaphore *release) {
+    if (!buf || buf->stream->api != API_VULKAN)
+        return -EINVAL;
+
+    struct funnel_vk_buffer *vkbuf = buf->api_buf;
+    struct funnel_vk_stream *vks = buf->stream->api_ctx;
+
+    // Wait for previous use to be complete
+    buffer_wait_idle(vkbuf);
+
+    int fd;
+    int ret = funnel_buffer_get_acquire_sync_file(buf, &fd);
+    if (ret < 0)
+        return ret;
+
+    VkImportSemaphoreFdInfoKHR info = {
+        .sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR,
+        .semaphore = vkbuf->acquire,
+        .flags = VK_SEMAPHORE_IMPORT_TEMPORARY_BIT,
+        .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+        .fd = fd,
+    };
+
+    if (vks->vkImportSemaphoreFdKHR(vks->device, &info) != VK_SUCCESS) {
+        fprintf(stderr, "Failed to import sync file into semaphore\n");
+        return -EIO;
+    }
+
+    buf->release.queried = true;
+
+    *acquire = vkbuf->acquire;
+    *release = vkbuf->release;
     return 0;
 }
