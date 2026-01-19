@@ -639,7 +639,7 @@ int main(int argc, char **argv) {
     } else if (argc > 1 && !strcmp(argv[1], "-double")) {
         mode = FUNNEL_DOUBLE_BUFFERED;
         presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
-    } else if (argc > 1 && !strcmp(argv[1], "-sync")) {
+    } else if (argc > 1 && !strcmp(argv[1], "-synchronous")) {
         mode = FUNNEL_SYNCHRONOUS;
         presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
     }
