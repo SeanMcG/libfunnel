@@ -3,6 +3,10 @@
 #include <funnel-vk.h>
 #include <funnel.h>
 
+#define API_VERSION VK_API_VERSION_1_0
+// #define HAVE_VK_1_1
+// #define HAVE_VK_1_2
+
 #include "xdg-decoration-unstable-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 #include <asm/errno.h>
@@ -48,28 +52,37 @@ static const char *const appName = "Wayland Vulkan Example";
 static const char *const instanceExtensionNames[] = {
     "VK_EXT_debug_utils",
     "VK_KHR_surface",
+    "VK_KHR_wayland_surface",
+
+#ifndef HAVE_VK_1_1
     "VK_KHR_get_surface_capabilities2",
     "VK_EXT_surface_maintenance1",
-    "VK_KHR_wayland_surface",
     "VK_KHR_get_physical_device_properties2",
     "VK_KHR_external_memory_capabilities",
     "VK_KHR_external_semaphore_capabilities",
+#endif
 };
 
 static const char *const deviceExtensionNames[] = {
     "VK_KHR_swapchain",
+
+#ifndef HAVE_VK_1_1
     "VK_EXT_swapchain_maintenance1",
     "VK_KHR_external_memory",
-    "VK_KHR_external_memory_fd",
-    "VK_EXT_external_memory_dma_buf",
     "VK_KHR_maintenance1",
     "VK_KHR_bind_memory2",
     "VK_KHR_sampler_ycbcr_conversion",
-    "VK_KHR_image_format_list",
-    "VK_EXT_image_drm_format_modifier",
     "VK_KHR_get_memory_requirements2",
     "VK_KHR_external_semaphore",
+#endif
+#ifndef HAVE_VK_1_2
+    "VK_KHR_image_format_list",
+#endif
+
     "VK_KHR_external_semaphore_fd",
+    "VK_KHR_external_memory_fd",
+    "VK_EXT_external_memory_dma_buf",
+    "VK_EXT_image_drm_format_modifier",
 };
 static const char *const layerNames[] = {"VK_LAYER_KHRONOS_validation"};
 static VkInstance instance = VK_NULL_HANDLE;
@@ -667,7 +680,7 @@ int main(int argc, char **argv) {
         appInfo.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
         appInfo.pEngineName = appName;
         appInfo.engineVersion = VK_MAKE_VERSION(0, 1, 0);
-        appInfo.apiVersion = VK_API_VERSION_1_0;
+        appInfo.apiVersion = API_VERSION;
 
         VkInstanceCreateInfo createInfo = {0};
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;

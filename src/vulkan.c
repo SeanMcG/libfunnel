@@ -441,34 +441,35 @@ static const struct funnel_stream_funcs vk_funcs = {
 int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
                               VkPhysicalDevice physical_device,
                               VkDevice device) {
-
-    VkPhysicalDeviceDrmPropertiesEXT drm_props = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT};
-
-    VkPhysicalDeviceProperties2 props = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
-        .pNext = &drm_props,
-    };
-
     PFN_vkGetPhysicalDeviceProperties2KHR vkGetPhysicalDeviceProperties2KHR =
         (PFN_vkGetPhysicalDeviceProperties2KHR)vkGetInstanceProcAddr(
-            instance, "vkGetPhysicalDeviceProperties2KHR");
+            instance, "vkGetPhysicalDeviceProperties2");
 
-    PFN_vkGetMemoryFdPropertiesKHR vkGetMemoryFdPropertiesKHR =
-        (PFN_vkGetMemoryFdPropertiesKHR)vkGetInstanceProcAddr(
-            instance, "vkGetMemoryFdPropertiesKHR");
+    if (!vkGetPhysicalDeviceProperties2KHR)
+        vkGetPhysicalDeviceProperties2KHR =
+            (PFN_vkGetPhysicalDeviceProperties2KHR)vkGetInstanceProcAddr(
+                instance, "vkGetPhysicalDeviceProperties2KHR");
 
     PFN_vkGetImageMemoryRequirements2KHR vkGetImageMemoryRequirements2KHR =
-        (PFN_vkGetImageMemoryRequirements2KHR)vkGetInstanceProcAddr(
-            instance, "vkGetImageMemoryRequirements2KHR");
+        (PFN_vkGetImageMemoryRequirements2KHR)vkGetDeviceProcAddr(
+            device, "vkGetImageMemoryRequirements2");
+
+    if (!vkGetImageMemoryRequirements2KHR)
+        vkGetImageMemoryRequirements2KHR =
+            (PFN_vkGetImageMemoryRequirements2KHR)vkGetDeviceProcAddr(
+                device, "vkGetImageMemoryRequirements2KHR");
+
+    PFN_vkGetMemoryFdPropertiesKHR vkGetMemoryFdPropertiesKHR =
+        (PFN_vkGetMemoryFdPropertiesKHR)vkGetDeviceProcAddr(
+            device, "vkGetMemoryFdPropertiesKHR");
 
     PFN_vkGetSemaphoreFdKHR vkGetSemaphoreFdKHR =
-        (PFN_vkGetSemaphoreFdKHR)vkGetInstanceProcAddr(instance,
-                                                       "vkGetSemaphoreFdKHR");
+        (PFN_vkGetSemaphoreFdKHR)vkGetDeviceProcAddr(device,
+                                                     "vkGetSemaphoreFdKHR");
 
     PFN_vkImportSemaphoreFdKHR vkImportSemaphoreFdKHR =
-        (PFN_vkImportSemaphoreFdKHR)vkGetInstanceProcAddr(
-            instance, "vkImportSemaphoreFdKHR");
+        (PFN_vkImportSemaphoreFdKHR)vkGetDeviceProcAddr(
+            device, "vkImportSemaphoreFdKHR");
 
     if (!vkGetPhysicalDeviceProperties2KHR || !vkGetMemoryFdPropertiesKHR ||
         !vkGetImageMemoryRequirements2KHR || !vkGetSemaphoreFdKHR ||
@@ -477,7 +478,15 @@ int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
         return -ENODEV;
     }
 
-    vkGetPhysicalDeviceProperties2KHR(physical_device, &props);
+    VkPhysicalDeviceDrmPropertiesEXT drm_props = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT};
+
+    VkPhysicalDeviceProperties2 props2 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+        .pNext = &drm_props,
+    };
+
+    vkGetPhysicalDeviceProperties2KHR(physical_device, &props2);
 
     if (!drm_props.hasRender) {
         fprintf(stderr, "No render node?\n");

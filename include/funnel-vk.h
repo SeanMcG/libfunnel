@@ -6,12 +6,27 @@
 /**
  * Set up a stream for Vulkan integration.
  *
- * Required extensions:
- *
- * - VK_KHR_get_physical_device_properties2
- * - VK_KHR_external_memory
+ * Required device extensions for Vulkan 1.2+:
+ * - VK_KHR_external_semaphore_fd
  * - VK_KHR_external_memory_fd
  * - VK_EXT_external_memory_dma_buf
+ * - VK_EXT_image_drm_format_modifier
+ *
+ * Additional required device extensions for Vulkan 1.1:
+ * - VK_KHR_image_format_list
+ *
+ * Additional required device extensions for Vulkan 1.0:
+ * - VK_KHR_external_memory
+ * - VK_KHR_maintenance1
+ * - VK_KHR_bind_memory2
+ * - VK_KHR_sampler_ycbcr_conversion
+ * - VK_KHR_get_memory_requirements2
+ * - VK_KHR_external_semaphore
+ *
+ * Additional required instance extensions for Vulkan 1.0:
+ * - VK_KHR_get_physical_device_properties2
+ * - VK_KHR_external_memory_capabilities
+ * - VK_KHR_external_semaphore_capabilities
  *
  * @param stream Stream
  * @param instance VkInstance to use for the stream (must outlive stream)
