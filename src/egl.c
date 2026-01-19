@@ -9,6 +9,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+PW_LOG_TOPIC_STATIC(log_funnel_egl, "funnel.egl");
+#define PW_LOG_TOPIC_DEFAULT log_funnel_egl
+
 static const struct {
     EGLAttrib fd, offset, pitch, modlo, modhi;
 } egl_attributes[4] = {
@@ -120,7 +123,7 @@ int funnel_stream_init_egl(struct funnel_stream *stream, EGLDisplay display) {
         return -ENODEV;
     }
 
-    fprintf(stderr, "DRM render node: %s\n", render_node);
+    pw_log_info("DRM render node: %s", render_node);
 
     int gbm_fd = open(render_node, O_RDONLY);
     if (gbm_fd < 0) {
@@ -158,10 +161,10 @@ static bool try_format(struct funnel_stream *stream, uint32_t format) {
     assert(eglQueryDmaBufModifiersEXT(stream->api_ctx, format, count, modifiers,
                                       external, &count));
 
-    fprintf(stderr, "Check format: 0x%x [%d modifiers]\n", format, count);
+    pw_log_info("Check format: 0x%x [%d modifiers]", format, count);
     for (unsigned i = 0; i < count; i++) {
-        fprintf(stderr, " - 0x%llx [external=%d]\n", (long long)modifiers[i],
-                external[i]);
+        pw_log_info(" - 0x%llx [external=%d]", (long long)modifiers[i],
+                    external[i]);
     }
 
     for (unsigned i = 0, j = 0; i < count; j++) {
@@ -176,7 +179,7 @@ static bool try_format(struct funnel_stream *stream, uint32_t format) {
 
     int ret = -ENOENT;
     if (count) {
-        fprintf(stderr, "%d usable modifiers\n", count);
+        pw_log_info("%d usable modifiers", count);
         ret = funnel_stream_gbm_add_format(stream, format, modifiers, count);
     }
 
@@ -261,7 +264,7 @@ int funnel_buffer_get_acquire_egl_sync(struct funnel_buffer *buf,
     *sync = eglCreateSync(buf->stream->api_ctx, EGL_SYNC_NATIVE_FENCE_ANDROID,
                           attributes);
     if (*sync == EGL_NO_SYNC) {
-        fprintf(stderr, "Unable to create an acquire EGLSync\n");
+        pw_log_error("Unable to create an acquire EGLSync");
         return -EIO;
         close(fd);
     }
@@ -277,8 +280,8 @@ int funnel_buffer_set_release_egl_sync(struct funnel_buffer *buf,
 
     int fd = eglDupNativeFenceFDANDROID(buf->stream->api_ctx, sync);
     if (fd == EGL_NO_NATIVE_FENCE_FD_ANDROID) {
-        fprintf(stderr, "Unable to get the release sync fd, is this an "
-                        "EGL_SYNC_NATIVE_FENCE_ANDROID?\n");
+        pw_log_error("Unable to get the release sync fd, is this an "
+                     "EGL_SYNC_NATIVE_FENCE_ANDROID?");
         return -EINVAL;
     }
 

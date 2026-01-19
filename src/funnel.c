@@ -27,7 +27,11 @@
 #include <gbm.h>
 #include <linux/dma-buf.h>
 #include <pipewire/pipewire.h>
+#include <pipewire/log.h>
 #include <xf86drm.h>
+
+PW_LOG_TOPIC_STATIC(log_funnel, "funnel.core");
+#define PW_LOG_TOPIC_DEFAULT log_funnel
 
 static struct {
     uint32_t drm_format;
@@ -140,7 +144,7 @@ static void on_add_buffer(void *data, struct pw_buffer *pwbuffer) {
         buffer->frontend_sync = true;
     }
 
-    fprintf(stderr, "on_add_buffer: %p -> %p\n", pwbuffer, buffer);
+    pw_log_debug("on_add_buffer: %p -> %p", pwbuffer, buffer);
 
     for (int i = 0; i < ARRAY_SIZE(buffer->fds); i++) {
         buffer->fds[i] = -1;
@@ -203,8 +207,7 @@ static inline bool is_buffer_pending(struct funnel_stream *stream) {
 }
 
 static void on_remove_buffer(void *data, struct pw_buffer *pwbuffer) {
-    fprintf(stderr, "on_remove_buffer: %p -> %p\n", pwbuffer,
-            pwbuffer->user_data);
+    pw_log_debug("on_remove_buffer: %p -> %p", pwbuffer, pwbuffer->user_data);
 
     if (pwbuffer->user_data) {
         struct funnel_buffer *buffer = pwbuffer->user_data;
@@ -216,7 +219,7 @@ static void on_remove_buffer(void *data, struct pw_buffer *pwbuffer) {
                 stream->pending_buffer = NULL;
         } else {
             buffer->pw_buffer = NULL;
-            fprintf(stderr, "defer buffer free: %p\n", buffer);
+            pw_log_debug("defer buffer free: %p", buffer);
         }
 
         pwbuffer->user_data = NULL;
@@ -245,10 +248,9 @@ static void update_timeouts(struct funnel_stream *stream) {
             // Pick a default rate of 60 FPS
             rate.num = 60;
             rate.denom = 1;
-            fprintf(stderr, "default rate: 60 FPS\n");
+            pw_log_debug("default rate: 60 FPS");
         } else {
-            fprintf(stderr, "negotiated rate: %d/%d FPS\n", rate.num,
-                    rate.denom);
+            pw_log_debug("negotiated rate: %d/%d FPS", rate.num, rate.denom);
         }
         uint64_t nsec = rate.denom * 1000000000L / rate.num;
 
@@ -286,32 +288,28 @@ static void on_state_changed(void *data, enum pw_stream_state old,
                              const char *error_message) {
     struct funnel_stream *stream = data;
 
-    fprintf(stderr, "on_state_changed: %s -> %s %s\n",
-            pw_stream_state_as_string(old), pw_stream_state_as_string(state),
-            error_message);
+    pw_log_info("on_state_changed: %s -> %s %s",
+                pw_stream_state_as_string(old),
+                pw_stream_state_as_string(state), error_message);
     switch (state) {
     case PW_STREAM_STATE_ERROR:
-        fprintf(stderr, "PW_STREAM_STATE_ERROR\n");
         reset_buffers(stream);
         break;
     case PW_STREAM_STATE_PAUSED:
-        fprintf(stderr, "PW_STREAM_STATE_PAUSED\n");
         reset_buffers(stream);
         update_timeouts(stream);
         break;
     case PW_STREAM_STATE_STREAMING:
-        fprintf(stderr, "PW_STREAM_STATE_STREAMING\n");
-        printf("driving:%d lazy:%d\n", pw_stream_is_driving(stream->stream),
-               pw_stream_is_lazy(stream->stream));
+        pw_log_info("driving:%d lazy:%d",
+                    pw_stream_is_driving(stream->stream),
+                    pw_stream_is_lazy(stream->stream));
         update_timeouts(stream);
         break;
     case PW_STREAM_STATE_CONNECTING:
-        fprintf(stderr, "PW_STREAM_STATE_CONNECTING\n");
         update_timeouts(stream);
         reset_buffers(stream);
         break;
     case PW_STREAM_STATE_UNCONNECTED:
-        fprintf(stderr, "PW_STREAM_STATE_UNCONNECTED\n");
         update_timeouts(stream);
         reset_buffers(stream);
         break;
@@ -336,7 +334,6 @@ static bool test_create_dmabuf(struct funnel_stream *stream, uint32_t format,
     assert(stream->cur.width == stream->cur.video_format.size.width);
     assert(stream->cur.height == stream->cur.video_format.size.height);
     stream->cur.plane_count = gbm_bo_get_plane_count(bo);
-    fprintf(stderr, "planes: %d\n", stream->cur.plane_count);
     for (int i = 0; i < stream->cur.plane_count; i++) {
         stream->cur.strides[i] = gbm_bo_get_stride_for_plane(bo, i);
         stream->cur.offsets[i] = gbm_bo_get_offset(bo, i);
@@ -351,12 +348,12 @@ static bool test_create_dmabuf(struct funnel_stream *stream, uint32_t format,
 
 static void on_param_changed(void *data, uint32_t id,
                              const struct spa_pod *format) {
-    fprintf(stderr, "on_param_changed: %d %p\n", id, format);
+    pw_log_debug("on_param_changed: %d %p", id, format);
 
     struct funnel_stream *stream = data;
 
     if (!format || id != SPA_PARAM_Format) {
-        fprintf(stderr, " ->ignored\n");
+        pw_log_debug(" ->ignored");
         return;
     }
 
@@ -422,8 +419,8 @@ static void on_param_changed(void *data, uint32_t id,
             return;
         }
 
-        fprintf(stderr, "Created buffer with format 0x%x and modifier 0x%llx\n",
-                stream->cur.format, (long long)stream->cur.modifier);
+        pw_log_info("Created buffer with format 0x%x and modifier 0x%llx",
+                    stream->cur.format, (long long)stream->cur.modifier);
 
         size_t num_formats =
             pw_array_get_len(&stream->cur.config.formats, struct funnel_format);
@@ -477,9 +474,9 @@ static void on_command(void *data, const struct spa_command *command) {
 
     switch (SPA_NODE_COMMAND_ID(command)) {
     case SPA_NODE_COMMAND_RequestProcess:
-        fprintf(stderr, "TRIGGER %p\n", stream);
         if (!pw_stream_is_lazy(stream->stream))
             return;
+        pw_log_trace("RequestProcess %p", stream);
         pw_stream_trigger_process(stream->stream);
         break;
     default:
@@ -497,8 +494,7 @@ static void unblock_process_thread(struct funnel_stream *stream) {
 static void on_process(void *data) {
     struct funnel_stream *stream = data;
 
-    static int frame = 0;
-    fprintf(stderr, "PROCESS %d\n", ++frame);
+    pw_log_trace("BEGIN frame %d", ++stream->frame);
 
     if (!stream->active)
         return;
@@ -507,9 +503,9 @@ static void on_process(void *data) {
         // Sync mode handshake
         if (stream->cycle_state == SYNC_CYCLE_WAITING) {
             stream->cycle_state = SYNC_CYCLE_ACTIVE;
-            fprintf(stderr, "PROCESS %d SIGNAL SYNC\n", frame);
+            pw_log_trace("Signal sync");
             pw_thread_loop_signal(stream->ctx->loop, true);
-            fprintf(stderr, "PROCESS %d ACCEPTED\n", frame);
+            pw_log_trace("Accepted");
         }
         // We should have a buffer now, if the cycle succeeded
     }
@@ -519,7 +515,7 @@ static void on_process(void *data) {
         stream->pending_buffer = NULL;
 
         assert(buf->pw_buffer);
-        fprintf(stderr, "PROCESS %d QUEUED BUFFER\n", frame);
+        pw_log_trace("Queued buffer");
         pw_stream_queue_buffer(stream->stream, buf->pw_buffer);
     } else if (stream->skip_buffer) {
         stream->skip_buffer = false;
@@ -527,7 +523,7 @@ static void on_process(void *data) {
 
     pw_thread_loop_signal(stream->ctx->loop, false);
 
-    fprintf(stderr, "PROCESS %d DONE\n", frame);
+    pw_log_trace("END frame %d", stream->frame);
 }
 
 static const struct pw_stream_events stream_events = {
@@ -543,7 +539,7 @@ static const struct pw_stream_events stream_events = {
 static void on_timeout(void *userdata, uint64_t expirations) {
     struct funnel_stream *stream = userdata;
 
-    fprintf(stderr, "TIMEOUT %p\n", stream);
+    pw_log_trace("Timeout %p", stream);
     pw_stream_trigger_process(stream->stream);
 }
 
@@ -769,9 +765,9 @@ int funnel_stream_init_gbm(struct funnel_stream *stream, int gbm_fd) {
         }
     }
 
-    fprintf(stderr, "GBM features: fd=%d timeline_sync=%d, import_export=%d\n",
-            fd, stream->gbm_timeline_sync,
-            stream->gbm_timeline_sync_import_export);
+    pw_log_info("GBM features: fd=%d timeline_sync=%d, import_export=%d", fd,
+                stream->gbm_timeline_sync,
+                stream->gbm_timeline_sync_import_export);
 #endif
 
     stream->api = API_GBM;
@@ -821,8 +817,9 @@ int funnel_stream_gbm_add_format(struct funnel_stream *stream, uint32_t format,
     fmt->modifiers = calloc(num_modifiers, sizeof(uint64_t));
     fmt->num_modifiers = num_modifiers;
     memcpy(fmt->modifiers, modifiers, num_modifiers * sizeof(uint64_t));
-    fprintf(stderr, "modifiers=%p fmt=%p base=%p nonlinear=%d\n",
-            fmt->modifiers, fmt, stream->config.formats.data, nonlinear);
+    pw_log_info("Add format 0x%x: modifiers=%p fmt=%p base=%p nonlinear=%d",
+                format, fmt->modifiers, fmt, stream->config.formats.data,
+                nonlinear);
 
     if (nonlinear)
         stream->config.has_nonlinear_tiling = true;
@@ -859,9 +856,6 @@ static void funnel_copy_formats(struct pw_array *dst, struct pw_array *src) {
         struct funnel_format *fmt =
             pw_array_add(dst, sizeof(struct funnel_format));
         assert(fmt);
-        fprintf(stderr, "fmt %p <- %p [%x %zd]\n", fmt, sfmt, sfmt->format,
-                sfmt->num_modifiers);
-
         fmt->format = sfmt->format;
         fmt->spa_format = sfmt->spa_format;
         fmt->modifiers = calloc(sfmt->num_modifiers, sizeof(uint64_t));
@@ -1183,8 +1177,7 @@ int funnel_stream_dequeue(struct funnel_stream *stream,
     pw_thread_loop_lock(ctx->loop);
 
     if (stream->buffers_dequeued > 0) {
-        fprintf(stderr,
-                "libfunnel: Dequeueing multiple buffers not supported\n");
+        pw_log_error("libfunnel: Dequeueing multiple buffers not supported");
         UNLOCK_RETURN(-EINVAL);
     }
 
@@ -1207,14 +1200,14 @@ int funnel_stream_dequeue(struct funnel_stream *stream,
         if (state != PW_STREAM_STATE_STREAMING) {
             if (stream->cur.config.mode == FUNNEL_ASYNC)
                 UNLOCK_RETURN(0);
-            fprintf(stderr, "dequeue: Wait for stream start\n");
+            pw_log_info("dequeue: Wait for stream start");
             unblock_process_thread(stream);
             continue;
         }
 
         if (stream->cur.config.mode == FUNNEL_SINGLE_BUFFERED &&
             is_buffer_pending(stream)) {
-            fprintf(stderr, "dequeue: 1B, waiting for pending frame\n");
+            pw_log_trace("dequeue: 1B, waiting for pending frame");
             unblock_process_thread(stream);
             continue;
         }
@@ -1225,12 +1218,12 @@ int funnel_stream_dequeue(struct funnel_stream *stream,
              * Tell the process callback that we are ready to start processing
              * a frame.
              */
-            fprintf(stderr, "## Wait for process (sync)\n");
+            pw_log_trace("## Wait for process (sync)");
             stream->cycle_state = SYNC_CYCLE_WAITING;
             continue;
         }
 
-        fprintf(stderr, "Try dequeue\n");
+        pw_log_trace("Try dequeue");
         int retries = stream->num_buffers;
 
         assert(stream->num_buffers > 0);
@@ -1247,13 +1240,13 @@ int funnel_stream_dequeue(struct funnel_stream *stream,
         if (pwbuffer)
             break;
 
-        fprintf(stderr, "dequeue: out of buffers?\n");
+        pw_log_warn("dequeue: out of buffers?");
         if (stream->cur.config.mode == FUNNEL_ASYNC)
             UNLOCK_RETURN(0);
     }
 
     struct funnel_buffer *buf = pwbuffer->user_data;
-    fprintf(stderr, "  Dequeue buffer %p (%p)\n", pwbuffer, buf);
+    pw_log_trace("  Dequeue buffer %p (%p)", pwbuffer, buf);
 
     assert(!buf->dequeued);
     stream->buffers_dequeued++;
@@ -1312,7 +1305,7 @@ static int funnel_stream_enqueue_internal(struct funnel_stream *stream,
 
     if (stream->cur.config.mode == FUNNEL_SYNCHRONOUS &&
         stream->cycle_state != SYNC_CYCLE_ACTIVE) {
-        fprintf(stderr, "enqueue: Aborted sync cycle, dropping buffer\n");
+        pw_log_info("enqueue: Aborted sync cycle, dropping buffer");
         UNLOCK_RETURN(-ESTALE);
     }
 
@@ -1343,8 +1336,8 @@ int funnel_stream_enqueue(struct funnel_stream *stream,
 
     if (buf->frontend_sync) {
         if (!buf->release.queried || !buf->acquire.queried) {
-            fprintf(stderr, "Attempted to enqueue buffer without sync, but "
-                            "sync is in use\n");
+            pw_log_error("Attempted to enqueue buffer without sync, but "
+                         "sync is in use");
             return -EINVAL;
         }
     }
@@ -1362,10 +1355,10 @@ int funnel_stream_enqueue(struct funnel_stream *stream,
             ret = funnel_stream_export_sync_file(
                 buf->stream, buf->release.handle, buf->release.point, &fd);
             if (ret) {
-                fprintf(stderr,
-                        "Failed to export sync, did you commmit the timeline "
-                        "point? (handle = %d, point=%lld)\n",
-                        buf->release.handle, (long long)buf->release.point);
+                pw_log_error(
+                    "Failed to export sync, did you commmit the timeline "
+                    "point? (handle = %d, point=%lld)",
+                    buf->release.handle, (long long)buf->release.point);
                 return -errno;
             }
             assert(fd >= 0);
@@ -1478,7 +1471,7 @@ int funnel_buffer_get_release_sync_object(struct funnel_buffer *buf,
         return -EINVAL;
 
     if (buf->release_sync_file_set) {
-        fprintf(stderr, "Cannot mix sync file and sync object APIs\n");
+        pw_log_error("Cannot mix sync file and sync object APIs");
         return -EINVAL;
     }
 
@@ -1525,7 +1518,7 @@ int funnel_buffer_set_release_sync_file(struct funnel_buffer *buf, int fd) {
         return -EINVAL;
 
     if (!buf->release_sync_file_set && buf->release.queried) {
-        fprintf(stderr, "Cannot mix sync file and sync object APIs\n");
+        pw_log_error("Cannot mix sync file and sync object APIs");
         return -EINVAL;
     }
 

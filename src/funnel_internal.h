@@ -85,6 +85,7 @@ struct funnel_stream {
     funnel_buffer_callback alloc_cb;
     funnel_buffer_callback free_cb;
     void *cb_opaque;
+    uint32_t frame;
 
     const struct funnel_stream_funcs *funcs;
     void *api_ctx;

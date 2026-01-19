@@ -10,6 +10,9 @@
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_core.h>
 
+PW_LOG_TOPIC_STATIC(log_funnel_vk, "funnel.vk");
+#define PW_LOG_TOPIC_DEFAULT log_funnel_vk
+
 struct funnel_vk_stream {
     VkInstance instance;
     VkDevice device;
@@ -100,8 +103,8 @@ int funnel_stream_vk_add_format(struct funnel_stream *stream, VkFormat format,
     assert(get_modifiers(vks->physical_device, format, &count,
                          modifier_props) >= 0);
 
-    fprintf(stderr, "Check format: %d / 0x%x [%d modifiers]\n", format,
-            gbm_format, count);
+    pw_log_info("Check format: %d / 0x%x [%d modifiers]", format, gbm_format,
+                count);
 
     unsigned usable = 0;
     for (unsigned i = 0; i < count; i++) {
@@ -163,16 +166,16 @@ int funnel_stream_vk_add_format(struct funnel_stream *stream, VkFormat format,
             modifiers[usable++] = prop->drmFormatModifier;
         }
 
-        fprintf(stderr, " - 0x%llx [planes=%d, features=0x%x]: %s\n",
-                (long long)prop->drmFormatModifier,
-                prop->drmFormatModifierPlaneCount,
-                prop->drmFormatModifierTilingFeatures,
-                unusable_reason ?: "USABLE");
+        pw_log_info(" - 0x%llx [planes=%d, features=0x%x]: %s",
+                    (long long)prop->drmFormatModifier,
+                    prop->drmFormatModifierPlaneCount,
+                    prop->drmFormatModifierTilingFeatures,
+                    unusable_reason ?: "USABLE");
     }
 
     int ret = -ENOENT;
     if (usable) {
-        fprintf(stderr, "%d usable modifiers\n", usable);
+        pw_log_info("%d usable modifiers", usable);
         ret =
             funnel_stream_gbm_add_format(stream, gbm_format, modifiers, usable);
     }
@@ -255,7 +258,7 @@ void funnel_vk_alloc_buffer(struct funnel_buffer *buffer) {
         fd_props.memoryTypeBits & mem_reqs.memoryRequirements.memoryTypeBits;
 
     if (!memory_type_bits) {
-        fprintf(stderr, "No valid memory type\n");
+        pw_log_error("No valid memory type");
         assert(0);
     }
 
@@ -364,7 +367,7 @@ int funnel_vk_enqueue_buffer(struct funnel_buffer *buf) {
 
     int fd;
     if (vks->vkGetSemaphoreFdKHR(vks->device, &info, &fd) != VK_SUCCESS) {
-        fprintf(stderr, "Failed to export sync file from semaphore\n");
+        pw_log_error("Failed to export sync file from semaphore");
         return -EIO;
     }
 
@@ -474,7 +477,7 @@ int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
     if (!vkGetPhysicalDeviceProperties2KHR || !vkGetMemoryFdPropertiesKHR ||
         !vkGetImageMemoryRequirements2KHR || !vkGetSemaphoreFdKHR ||
         !vkImportSemaphoreFdKHR) {
-        fprintf(stderr, "Missing extensions\n");
+        pw_log_error("Missing extensions");
         return -ENODEV;
     }
 
@@ -489,12 +492,12 @@ int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
     vkGetPhysicalDeviceProperties2KHR(physical_device, &props2);
 
     if (!drm_props.hasRender) {
-        fprintf(stderr, "No render node?\n");
+        pw_log_error("No render node?");
         return -ENODEV;
     }
 
-    fprintf(stderr, "Render node %d:%d\n", (int)drm_props.renderMajor,
-            (int)drm_props.renderMinor);
+    pw_log_info("Render node %d:%d", (int)drm_props.renderMajor,
+                (int)drm_props.renderMinor);
 
     char render_node[64];
 
@@ -531,9 +534,8 @@ int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
 
     ret = funnel_stream_set_sync(stream, FUNNEL_SYNC_EXPLICIT_HYBRID);
     if (ret < 0) {
-        fprintf(stderr,
-                "Vulkan requires explicit sync, but the driver does not "
-                "support it?\n");
+        pw_log_error("Vulkan requires explicit sync, but the driver does not "
+                     "support it?");
         return ret;
     }
 
@@ -576,7 +578,7 @@ int funnel_buffer_get_vk_semaphores(struct funnel_buffer *buf,
     };
 
     if (vks->vkImportSemaphoreFdKHR(vks->device, &info) != VK_SUCCESS) {
-        fprintf(stderr, "Failed to import sync file into semaphore\n");
+        pw_log_error("Failed to import sync file into semaphore");
         return -EIO;
     }
 
