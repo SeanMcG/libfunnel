@@ -419,8 +419,12 @@ static void on_param_changed(void *data, uint32_t id,
             return;
         }
 
-        pw_log_info("Created buffer with format 0x%x and modifier 0x%llx",
-                    stream->cur.format, (long long)stream->cur.modifier);
+        pw_log_info("Created buffer with format 0x%x and modifier 0x%llx "
+                    "(%dx%d %dp s=%d o=%d)",
+                    stream->cur.format, (long long)stream->cur.modifier,
+                    stream->cur.width, stream->cur.height,
+                    stream->cur.plane_count, stream->cur.strides[0],
+                    stream->cur.offsets[1]);
 
         size_t num_formats =
             pw_array_get_len(&stream->cur.config.formats, struct funnel_format);
