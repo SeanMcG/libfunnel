@@ -1279,7 +1279,9 @@ static int funnel_stream_enqueue_internal(struct funnel_stream *stream,
         if (!buf->pw_buffer) {
             funnel_buffer_free(buf);
             unblock_process_thread(stream);
-            UNLOCK_RETURN(-ESTALE);
+            // Stale buffer, discarded (no error)
+            pw_log_info("enqueue: Buffer is stale, dropping buffer");
+            UNLOCK_RETURN(0);
         }
 
         if (ctx->dead || !stream->active) {
@@ -1291,7 +1293,9 @@ static int funnel_stream_enqueue_internal(struct funnel_stream *stream,
         if (state != PW_STREAM_STATE_STREAMING) {
             pw_stream_return_buffer(stream->stream, buf->pw_buffer);
             unblock_process_thread(stream);
-            UNLOCK_RETURN(-EAGAIN);
+            // Dropped buffer due to stream pause, discarded (no error)
+            pw_log_info("enqueue: Stream is not running, dropping buffer");
+            UNLOCK_RETURN(0);
         }
 
         if (stream->cur.config.mode == FUNNEL_ASYNC) {
@@ -1310,7 +1314,7 @@ static int funnel_stream_enqueue_internal(struct funnel_stream *stream,
     if (stream->cur.config.mode == FUNNEL_SYNCHRONOUS &&
         stream->cycle_state != SYNC_CYCLE_ACTIVE) {
         pw_log_info("enqueue: Aborted sync cycle, dropping buffer");
-        UNLOCK_RETURN(-ESTALE);
+        UNLOCK_RETURN(0);
     }
 
     assert(!is_buffer_pending(stream));
@@ -1325,7 +1329,7 @@ static int funnel_stream_enqueue_internal(struct funnel_stream *stream,
     if (stream->cur.config.mode == FUNNEL_ASYNC)
         pw_stream_trigger_process(stream->stream);
 
-    UNLOCK_RETURN(0);
+    UNLOCK_RETURN(1);
 }
 
 int funnel_stream_enqueue(struct funnel_stream *stream,

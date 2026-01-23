@@ -1105,10 +1105,13 @@ int main(int argc, char **argv) {
 
         if (buf) {
             ret = funnel_stream_enqueue(stream, buf);
-            if (ret < 0) {
+            if (ret < 0)
                 fprintf(stderr, "Queue failed: %d\n", ret);
-            }
-            assert(ret == 0 || ret == -ESTALE);
+            else if (ret != 1)
+                fprintf(stderr,
+                        "Buffer dropped (stream renegotiated or paused)\n");
+
+            assert(ret >= 0);
         }
 
         wl_display_roundtrip(display);
