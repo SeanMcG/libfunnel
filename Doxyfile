@@ -1,0 +1,63 @@
+PROJECT_NAME           = libfunnel
+PROJECT_NUMBER         =
+OUTPUT_DIRECTORY       = docs_out
+FULL_PATH_NAMES        = YES
+JAVADOC_AUTOBRIEF      = YES
+TAB_SIZE               = 4
+OPTIMIZE_OUTPUT_FOR_C  = YES
+EXTRACT_ALL            = NO
+EXTRACT_STATIC         = YES
+STRIP_FROM_PATH        = include
+STRIP_FROM_INC_PATH    =
+SHOW_FILES             = YES
+SHOW_INCLUDE_FILES     = YES
+GENERATE_TODOLIST      = NO
+GENERATE_TESTLIST      = NO
+GENERATE_BUGLIST       = NO
+GENERATE_DEPRECATEDLIST= NO
+QUIET                  = NO
+WARN_NO_PARAMDOC       = YES
+HAVE_DOT               = NO
+INPUT                  = include docs/index.md
+FILE_PATTERNS          = "*.h" "*.c"
+RECURSIVE              = YES
+EXAMPLE_PATH           = demo
+EXAMPLE_PATTERNS       = "*.c" "*.inc"
+ALIASES               += "return_err=@return 0 on success, or a negative error number on error."
+ALIASES               += "borrowed=[\ref Lifetimes \"@e Lifetime: <b>borrowed</b>\"]"
+ALIASES               += "borrowed-from{1}=[\ref Lifetimes \"@e Lifetime: @b borrowed-from <tt>\1</tt>\"]"
+ALIASES               += "borrowed-by{1}=[\ref Lifetimes \"@e Lifetime: @b borrowed-by <tt>\1</tt>\"]"
+ALIASES               += "owned=[\ref Lifetimes \"@e Lifetime: <b>owned</b>\"]"
+INLINE_SIMPLE_STRUCTS  = YES
+
+REFERENCED_BY_RELATION = NO
+REFERENCES_RELATION    = NO
+IGNORE_PREFIX          =
+GENERATE_TREEVIEW      = YES
+SEARCHENGINE           = YES
+GENERATE_LATEX         = NO
+
+TOC_INCLUDE_HEADINGS   = 0
+LAYOUT_FILE            = docs/DoxygenLayout.xml
+
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+PREDEFINED             =
+HTML_EXTRA_STYLESHEET  = docs/doxygen-awesome-css/doxygen-awesome.css
+HTML_EXTRA_FILES       = docs/doxygen-awesome-css/doxygen-awesome-darkmode-toggle.js
+HTML_INDEX_NUM_ENTRIES = 100
+HTML_HEADER            = docs/header.html
+
+MAX_INITIALIZER_LINES  = 1
+SORT_MEMBER_DOCS       = NO
+
+CALL_GRAPH             = NO
+CALLER_GRAPH           = NO
+CLASS_GRAPH            = NO
+COLLABORATION_GRAPH    = NO
+GROUP_GRAPHS           = NO
+INCLUDED_BY_GRAPH      = NO
+INCLUDE_GRAPH          = NO
+GRAPHICAL_HIERARCHY    = NO
+DIRECTORY_GRAPH        = NO
+TEMPLATE_RELATIONS     = NO

@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/** @file */
+
 struct funnel_ctx;
 struct funnel_stream;
 struct funnel_buffer;
@@ -21,11 +23,23 @@ struct funnel_fraction {
  */
 static const struct funnel_fraction FUNNEL_RATE_VARIABLE = {0, 1};
 
+/** Helper to create a funnel_fraction
+ @param num Numerator
+ @param den Denominator
+ @returns The funnel_fraction
+
+ */
 static inline struct funnel_fraction FUNNEL_FRACTION(uint32_t num,
                                                      uint32_t den) {
     return (struct funnel_fraction){num, den};
 }
 
+/** A user callback for buffer creation/destruction
+ *
+ * @param opaque Opaque user data pointer
+ * @param stream Stream for this buffer @borrowed
+ * @param buf Buffer being allocated or freed @borrowed
+ */
 typedef void (*funnel_buffer_callback)(void *opaque,
                                        struct funnel_stream *stream,
                                        struct funnel_buffer *buf);
@@ -170,23 +184,27 @@ enum funnel_sync {
 /**
  * Create a Funnel context.
  *
- * @param ctx New context
+ * @param[out] pctx New context @owned
+ * @return_err
+ * @retval -ECONNREFUSED Failed to connect to PipeWire daemon
  */
 int funnel_init(struct funnel_ctx **pctx);
 
 /**
  * Shut down a Funnel context.
  *
- * @param ctx Context
+ * @param ctx Context @owned
  */
 void funnel_shutdown(struct funnel_ctx *ctx);
 
 /**
  * Create a new stream.
  *
- * @param ctx Context
- * @param name Name of the new stream (borrow)
- * @param stream New stream (must not outlive context)
+ * @param ctx Context @borrowed
+ * @param name Name of the new stream @borrowed
+ * @param[out] pstream New stream @owned-from{ctx}
+ * @return_err
+ * @retval -EIO The PipeWire context is invalid (fatal error)
  */
 int funnel_stream_create(struct funnel_ctx *ctx, const char *name,
                          struct funnel_stream **pstream);
@@ -194,9 +212,9 @@ int funnel_stream_create(struct funnel_ctx *ctx, const char *name,
 /**
  * Specify callbacks for buffer creation/destruction.
  *
- * @param stream Stream
- * @param alloc Callback when a buffer is allocated
- * @param free Callback when a buffer is freed
+ * @param stream Stream @borrowed
+ * @param alloc Callback when a buffer is allocated @borrowed-by{stream}
+ * @param free Callback when a buffer is freed @borrowed-by{stream}
  * @param opaque Opaque user pointer
  */
 void funnel_stream_set_buffer_callbacks(struct funnel_stream *stream,
@@ -207,9 +225,11 @@ void funnel_stream_set_buffer_callbacks(struct funnel_stream *stream,
 /**
  * Set the frame dimensions for a stream.
  *
- * @param stream Stream
+ * @param stream Stream @borrowed
  * @param width Width in pixels
  * @param height Height in pixels
+ * @return_err
+ * @retval -EINVAL Invalid argument
  */
 int funnel_stream_set_size(struct funnel_stream *stream, uint32_t width,
                            uint32_t height);
@@ -217,27 +237,33 @@ int funnel_stream_set_size(struct funnel_stream *stream, uint32_t width,
 /**
  * Configure the queueing mode for the stream.
  *
- * @param stream Stream
+ * @param stream Stream @borrowed
  * @param mode Queueing mode for the stream
+ * @return_err
+ * @retval -EINVAL Invalid argument
  */
 int funnel_stream_set_mode(struct funnel_stream *stream, enum funnel_mode mode);
 
 /**
  * Configure the synchronization mode for the stream.
  *
- * @param stream Stream
- * @param mode Synchronization mode for the stream
+ * @param stream Stream @borrowed
+ * @param sync Synchronization mode for the stream
+ * @return_err
+ * @retval -EOPNOTSUPP The selected API does not support this sync mode
  */
 int funnel_stream_set_sync(struct funnel_stream *stream, enum funnel_sync sync);
 
 /**
  * Set the frame rate of a stream.
  *
- * @param stream Stream
+ * @param stream Stream @borrowed
  * @param def Default frame rate (FUNNEL_RATE_VARIABLE for no default or
  * variable)
  * @param min Minimum frame rate (FUNNEL_RATE_VARIABLE if variable)
  * @param max Maximum frame rate (FUNNEL_RATE_VARIABLE if variable)
+ * @return_err
+ * @retval -EINVAL Invalid argument
  */
 int funnel_stream_set_rate(struct funnel_stream *stream,
                            struct funnel_fraction def,
@@ -247,8 +273,10 @@ int funnel_stream_set_rate(struct funnel_stream *stream,
 /**
  * Get the currently negotiated frame rate of a stream.
  *
- * @param stream Stream
- * @param rate Output frame rate
+ * @param stream Stream @borrowed
+ * @param[out] prate Output frame rate
+ * @return_err
+ * @retval -EINPROGRESS The stream is not yet initialized
  */
 int funnel_stream_get_rate(struct funnel_stream *stream,
                            struct funnel_fraction *prate);
@@ -256,7 +284,7 @@ int funnel_stream_get_rate(struct funnel_stream *stream,
 /**
  * Clear the supported format list. Used for reconfiguration.
  *
- * @param stream Stream
+ * @param stream Stream @borrowed
  */
 void funnel_stream_clear_formats(struct funnel_stream *stream);
 
@@ -266,14 +294,22 @@ void funnel_stream_clear_formats(struct funnel_stream *stream);
  * If called on an already configured stream, this will update the
  * configuration.
  *
- * @param stream Stream
+ * @param stream Stream @borrowed
+ * @return_err
+ * @retval -EINVAL The stream is in an invalid state (missing settings)
+ * @retval -EIO The PipeWire context is invalid or stream creation failed
  */
 int funnel_stream_configure(struct funnel_stream *stream);
 
 /**
  * Start running a stream.
  *
- * @param stream Stream
+ * Automatically calls funnel_stream_configure() if necessary.
+ *
+ * @param stream Stream @borrowed
+ * @return_err
+ * @retval -EINVAL The stream is in an invalid state (missing settings)
+ * @retval -EIO The PipeWire context is invalid or stream creation failed
  */
 int funnel_stream_start(struct funnel_stream *stream);
 
@@ -284,7 +320,10 @@ int funnel_stream_start(struct funnel_stream *stream);
  * useful to abort a call to `funnel_stream_dequeue()`
  * in one of the synchronous modes.
  *
- * @param stream Stream
+ * @param stream Stream @borrowed
+ * @return_err
+ * @retval -EINVAL The stream is not started
+ * @retval -EIO The PipeWire context is invalid
  */
 int funnel_stream_stop(struct funnel_stream *stream);
 
@@ -293,7 +332,7 @@ int funnel_stream_stop(struct funnel_stream *stream);
  *
  * The stream will be stopped if it is running.
  *
- * @param stream Stream
+ * @param stream Stream @owned
  */
 void funnel_stream_destroy(struct funnel_stream *stream);
 
@@ -303,8 +342,16 @@ void funnel_stream_destroy(struct funnel_stream *stream);
  * Note that, currently, you may only have one buffer
  * dequeued at a time.
  *
- * @param stream Stream
- * @param buf Output buffer (NULL if no buffer is available)
+ * @param stream Stream @borrowed
+ * @param[out] pbuf Buffer that was dequeued @owned-from{stream}
+ * @return Whether a buffer was dequeued successfully, or a negative error
+ * number on error.
+ * @retval 0 No buffer is available
+ * @retval 1 A buffer was successfully dequeued
+ * @retval -EINVAL Stream is in an invalid state
+ * @retval -EBUSY Attempted to dequeue more than one buffer at once
+ * @retval -EIO The PipeWire context is invalid
+ * @retval -ESHUTDOWN Stream is not started
  */
 int funnel_stream_dequeue(struct funnel_stream *stream,
                           struct funnel_buffer **pbuf);
@@ -315,8 +362,19 @@ int funnel_stream_dequeue(struct funnel_stream *stream,
  * After this call, the buffer is no longer owned by the user and may not be
  * queued again until it is dequeued.
  *
- * @param stream Stream
- * @param buf Buffer to enqueue (must have been dequeued)
+ * @param stream Stream @borrowed
+ * @param buf Buffer to enqueue @owned
+ * @return Whether a buffer was enqueued successfully, or a negative error
+ * number on error.
+ * @retval 0 The buffer was dropped because the stream configuration or state
+ * changed.
+ * @retval 1 The buffer was successfully enqueued.
+ * @retval -EINVAL
+ *  * Invalid argument
+ *  * Stream is in an invalid state (not yet configured)
+ *  * Buffer requires sync, but sync was not handled properly
+ * @retval -EIO The PipeWire context is invalid
+ * @retval -ESHUTDOWN Stream is not started
  */
 int funnel_stream_enqueue(struct funnel_stream *stream,
                           struct funnel_buffer *buf);
@@ -327,8 +385,14 @@ int funnel_stream_enqueue(struct funnel_stream *stream,
  * After this call, the buffer is no longer owned by the user and may not be
  * queued again until it is dequeued. This will effectively drop one frame.
  *
- * @param stream Stream
- * @param buf Buffer to return (must have been dequeued)
+ * @param stream Stream @borrowed
+ * @param buf Buffer to return @owned
+ * @return_err
+ * @retval -EINVAL
+ *  * Invalid argument
+ *  * Stream is in an invalid state (not yet configured)
+ * @retval -EIO The PipeWire context is invalid
+ * @retval -ESHUTDOWN Stream is not started
  */
 int funnel_stream_return(struct funnel_stream *stream,
                          struct funnel_buffer *buf);
@@ -340,16 +404,18 @@ int funnel_stream_return(struct funnel_stream *stream,
  * to return without a buffer. This is useful to break a thread out of
  * that function.
  *
- * @param stream Stream
+ * @param stream Stream @borrowed
+ * @return_err
+ * @retval -EINVAL Stream is in an invalid state (not yet configured)
  */
 int funnel_stream_skip_frame(struct funnel_stream *stream);
 
 /**
  * Get the dimensions of a Funnel buffer.
  *
- * @param buf Buffer
- * @param pwidth Output width
- * @param pheight Output height
+ * @param buf Buffer @borrowed
+ * @param[out] pwidth Output width
+ * @param[out] pheight Output height
  */
 void funnel_buffer_get_size(struct funnel_buffer *buf, uint32_t *pwidth,
                             uint32_t *pheight);
@@ -357,7 +423,13 @@ void funnel_buffer_get_size(struct funnel_buffer *buf, uint32_t *pwidth,
 /**
  * Set an arbitrary user data pointer for a buffer.
  *
- * @param buf Buffer
+ * The user is responsible for managing the lifetime of this object.
+ * Generally, you should use funnel_stream_set_buffer_callbacks()
+ * to provide buffer creation/destruction callbacks, and set and
+ * release the user data pointer in the alloc and free callback
+ * respectively.
+ *
+ * @param buf Buffer @borrowed
  * @param opaque Opaque user data pointer
  */
 void funnel_buffer_set_user_data(struct funnel_buffer *buf, void *opaque);
@@ -365,14 +437,16 @@ void funnel_buffer_set_user_data(struct funnel_buffer *buf, void *opaque);
 /**
  * Get an arbitrary user data pointer for a buffer.
  *
- * @param buf Buffer
+ * @param buf Buffer @borrowed
+ * @return The user data pointer
  */
 void *funnel_buffer_get_user_data(struct funnel_buffer *buf);
 
 /**
  * Check whether a buffer requires explicit synchronization.
  *
- * @param buf Buffer
+ * @param buf Buffer @borrowed
+ * @retval true if the buffer requires explicit synchronization
  */
 bool funnel_buffer_has_sync(struct funnel_buffer *buf);
 
@@ -382,6 +456,8 @@ bool funnel_buffer_has_sync(struct funnel_buffer *buf);
  * Buffers are considered efficient when they are not using linear tiling
  * and non-linear tiling is supported by the GPU driver.
  *
- * @param buf Buffer
+ * @param buf Buffer @borrowed
+ * @retval true if the buffer is likely to be efficient to render into
+ * @retval false if the buffer is unlikely to be efficient to render into
  */
 bool funnel_buffer_is_efficient_for_rendering(struct funnel_buffer *buf);

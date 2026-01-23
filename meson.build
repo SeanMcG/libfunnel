@@ -111,7 +111,7 @@ if get_option('test_apps')
         gl = dependency('GL', native: native)
         x11 = dependency('x11', native: native)
 
-        executable('funnel-test-egl', 'test-egl.c',
+        executable('funnel-test-egl', 'demo/test-egl.c',
             dependencies: [gl, egl, x11, funnel, funnel_egl],
             install: true,
         )
@@ -152,7 +152,7 @@ if get_option('test_apps')
         'shaders/triangle_vert.vert',
         ])
 
-        executable('funnel-test-vk', 'test-vk.c', xdg_shell, xdg_decoration,
+        executable('funnel-test-vk', 'demo/test-vk.c', xdg_shell, xdg_decoration,
             glsl_generator.process(demo_shaders),
             dependencies: [wayland, funnel, funnel_vk, vulkan],
             install: true,

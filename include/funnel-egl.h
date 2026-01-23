@@ -1,8 +1,12 @@
+/** @file */
 #pragma once
 
 #include "funnel.h"
 #include <EGL/egl.h>
 
+/**
+ * Formats available for EGL integration
+ */
 enum funnel_egl_format {
     FUNNEL_EGL_FORMAT_UNKNOWN = 0,
     FUNNEL_EGL_FORMAT_RGB888,
@@ -12,8 +16,14 @@ enum funnel_egl_format {
 /**
  * Set up a stream for EGL integration.
  *
- * @param stream Stream
- * @param display EGLDisplay to attach to the stream (must outlive stream)
+ * @param stream Stream @borrowed
+ * @param display EGLDisplay to attach to the stream @borrowed-by{stream}
+ * @return_err
+ * @retval -EEXIST The API was already initialized once
+ * @retval -ENOTSUP Missing EGL extensions
+ * @retval -ENODEV
+ *  * Could not locate DRM render node
+ *  * GBM or EGL initialization failed
  */
 int funnel_stream_init_egl(struct funnel_stream *stream, EGLDisplay display);
 
@@ -21,8 +31,13 @@ int funnel_stream_init_egl(struct funnel_stream *stream, EGLDisplay display);
  * Add a supported EGL format. Must be called in preference order (highest to
  * lowest).
  *
- * @param stream Stream
+ * @param stream Stream @borrowed
  * @param format `enum funnel_egl_format` format
+ * @return_err
+ * @retval -EINVAL
+ *  * Invalid argument
+ *  * API is not EGL
+ * @retval -ENOENT Format is not supported by the device or not usable
  */
 int funnel_stream_egl_add_format(struct funnel_stream *stream,
                                  enum funnel_egl_format format);
@@ -33,19 +48,27 @@ int funnel_stream_egl_add_format(struct funnel_stream *stream,
  * The EGLImage will only be valid until `buf` is returned or enqueued, or the
  * stream is destroyed.
  *
- * @param buf Buffer
- * @param bo Output EGLImage for the buffer (borrowed)
+ * @param buf Buffer @borrowed
+ * @param[out] pimage EGLImage for the buffer @borrowed-from{buf}
+ * @return_err
+ * @retval -EINVAL
+ *  * Invalid argument
+ *  * API is not EGL
  */
-int funnel_buffer_get_egl_image(struct funnel_buffer *buf, EGLImage *image);
+int funnel_buffer_get_egl_image(struct funnel_buffer *buf, EGLImage *pimage);
 
 /**
  * Get the EGL format for a Funnel buffer.
  *
- * @param buf Buffer
- * @param format Output EGL format
+ * @param buf Buffer @borrowed
+ * @param[out] pformat EGL format
+ * @return_err
+ * @retval -EINVAL
+ *  * Invalid argument
+ *  * API is not EGL
  */
 int funnel_buffer_get_egl_format(struct funnel_buffer *buf,
-                                 enum funnel_egl_format *format);
+                                 enum funnel_egl_format *pformat);
 
 /**
  * Get the EGLSync for acquiring the buffer.
@@ -53,11 +76,16 @@ int funnel_buffer_get_egl_format(struct funnel_buffer *buf,
  * The user must wait on this sync object before accessing
  * the buffer.
  *
- * @param buf Buffer
- * @param sync Output EGLSync (must be destroyed by caller)
+ * @param buf Buffer @borrowed
+ * @param[out] psync EGLSync @owned
+ * @return_err
+ * @retval -EINVAL
+ *  * Invalid argument
+ *  * API is not EGL
+ * @retval -EIO Unable to create an acquire EGLSync
  */
 int funnel_buffer_get_acquire_egl_sync(struct funnel_buffer *buf,
-                                       EGLSync *sync);
+                                       EGLSync *psync);
 
 /**
  * Set the EGLSync for releasing the buffer.
@@ -65,7 +93,12 @@ int funnel_buffer_get_acquire_egl_sync(struct funnel_buffer *buf,
  * This sync object must be signaled when access to the buffer is complete.
  * The sync type must be EGL_SYNC_NATIVE_FENCE_ANDROID.
  *
- * @param buf Buffer
- * @param sync EGLSync (borrowed, must be destroyed by caller)
+ * @param buf Buffer @borrowed
+ * @param sync EGLSync @borrowed
+ * @return_err
+ * @retval -EINVAL
+ *  * Invalid argument
+ *  * API is not EGL
+ * @retval -EIO Unable to set the release EGLSync (is the sync type correct?)
  */
 int funnel_buffer_set_release_egl_sync(struct funnel_buffer *buf, EGLSync sync);

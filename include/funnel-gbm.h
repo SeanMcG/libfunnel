@@ -1,3 +1,4 @@
+/** @file */
 #pragma once
 
 #include "funnel.h"
@@ -6,9 +7,11 @@
 /**
  * Set up a stream for GBM integration.
  *
- * @param stream Stream
- * @param gbm_fd File descriptor of the GBM device (borrow, must be closed by
- * caller at any time)
+ * @param stream Stream @borrowed
+ * @param gbm_fd File descriptor of the GBM device @borrowed
+ * @return_err
+ * @retval -EEXIST The API was already initialized once
+ * @retval -EINVAL Failed to create GBM device
  */
 int funnel_stream_init_gbm(struct funnel_stream *stream, int gbm_fd);
 
@@ -16,10 +19,12 @@ int funnel_stream_init_gbm(struct funnel_stream *stream, int gbm_fd);
  * Add a supported GBM format. Must be called in preference order (highest to
  * lowest).
  *
- * @param stream Stream
+ * @param stream Stream @borrowed
  * @param format DRM format (FOURCC)
- * @param modifiers Pointer to a list of modifiers (borrow)
+ * @param modifiers Pointer to a list of modifiers @borrowed
  * @param num_modifiers Number of modifiers passed
+ * @retval -EINVAL Invalid argument
+ * @retval -ENOTSUP Format is not supported by libfunnel
  */
 int funnel_stream_gbm_add_format(struct funnel_stream *stream, uint32_t format,
                                  uint64_t *modifiers, size_t num_modifiers);
@@ -30,10 +35,16 @@ int funnel_stream_gbm_add_format(struct funnel_stream *stream, uint32_t format,
  * The BO will only be valid until `buf` is returned or enqueued, or the
  * stream is destroyed.
  *
- * @param buf Buffer
- * @param bo Output GBM BO for the buffer (borrowed)
+ * NOTE: To ensure cross-GPU compatibility, LINEAR buffers might have
+ * a width that does not correspond to the user-configured size. Use
+ * funnel_buffer_get_size() to retrieve the intended texture dimensions,
+ * instead of gbm_bo_get_width() and gbm_bo_get_height().
+ *
+ * @param buf Buffer @borrowed
+ * @param[out] pbo GBM BO for the buffer @borrowed-from{buf}
+ * @return_err
  */
-int funnel_buffer_get_gbm_bo(struct funnel_buffer *buf, struct gbm_bo **bo);
+int funnel_buffer_get_gbm_bo(struct funnel_buffer *buf, struct gbm_bo **pbo);
 
 /**
  * Get the sync object and point for acquiring the buffer.
@@ -41,12 +52,16 @@ int funnel_buffer_get_gbm_bo(struct funnel_buffer *buf, struct gbm_bo **bo);
  * The user must wait on this timeline sync object point before accessing
  * the buffer.
  *
- * @param buf Buffer
- * @param handle Output acquire DRM sync object handle
- * @param point Output acquire DRM sync object point
+ * @param buf Buffer @borrowed
+ * @param[out] phandle Acquire DRM sync object handle @borrowed-from{buf}
+ * @param[out] ppoint Acquire DRM sync object point
+ * @return_err
+ * @retval -EINVAL
+ *  * Buffer does not require sync
+ *  * Sync file APIs were already already used
  */
 int funnel_buffer_get_acquire_sync_object(struct funnel_buffer *buf,
-                                          uint32_t *handle, uint64_t *point);
+                                          uint32_t *phandle, uint64_t *ppoint);
 
 /**
  * Get the sync object and point for releasing the buffer.
@@ -54,12 +69,16 @@ int funnel_buffer_get_acquire_sync_object(struct funnel_buffer *buf,
  * The user must signal this timeline sync object after
  * access to the buffer is complete.
  *
- * @param buf Buffer
- * @param handle Output release DRM sync object handle
- * @param point Output release DRM sync object point
+ * @param buf Buffer @borrowed
+ * @param[out] phandle Release DRM sync object handle @borrowed-from{buf}
+ * @param[out] ppoint Release DRM sync object point
+ * @return_err
+ * @retval -EINVAL
+ *  * Buffer does not require sync
+ *  * Sync file APIs were already already used
  */
 int funnel_buffer_get_release_sync_object(struct funnel_buffer *buf,
-                                          uint32_t *handle, uint64_t *point);
+                                          uint32_t *phandle, uint64_t *ppoint);
 
 /**
  * Get the sync object and point for acquiring the buffer.
@@ -67,17 +86,27 @@ int funnel_buffer_get_release_sync_object(struct funnel_buffer *buf,
  * The user must wait on this sync file before accessing
  * the buffer.
  *
- * @param buf Buffer
- * @param fd Output sync file fd for buffer acquisition (owned by the caller)
+ * @param buf Buffer @borrowed
+ * @param[out] pfd Sync file fd for buffer acquisition @owned
+ * @return_err
+ * @retval -EINVAL
+ *  * Invalid argument
+ *  * Buffer does not require sync
+ *  * Sync object APIs were already already used
  */
-int funnel_buffer_get_acquire_sync_file(struct funnel_buffer *buf, int *fd);
+int funnel_buffer_get_acquire_sync_file(struct funnel_buffer *buf, int *pfd);
 
 /**
  * Set the sync file for releasing the buffer.
  *
  * This sync file must be signaled when access to the buffer is complete.
  *
- * @param buf Buffer
- * @param fd DRM sync file signaled on release (borrowed)
+ * @param buf Buffer @borrowed
+ * @param fd DRM sync file signaled on release @borrowed
+ * @return_err
+ * @retval -EINVAL
+ *  * Invalid argument
+ *  * Buffer does not require sync
+ *  * Sync object APIs were already already used
  */
 int funnel_buffer_set_release_sync_file(struct funnel_buffer *buf, int fd);
