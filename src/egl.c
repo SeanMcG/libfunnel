@@ -99,9 +99,9 @@ int funnel_stream_init_egl(struct funnel_stream *stream, EGLDisplay display) {
             (PFNEGLDUPNATIVEFENCEFDANDROIDPROC)eglGetProcAddress(
                 "eglDupNativeFenceFDANDROID");
 
-    assert(eglQueryDeviceStringEXT);
-    assert(eglQueryDisplayAttribEXT);
-    assert(eglQueryDmaBufModifiersEXT);
+    if (!eglQueryDeviceStringEXT || !eglQueryDisplayAttribEXT ||
+        !eglQueryDmaBufModifiersEXT)
+        return -ENOTSUP;
 
     EGLAttrib device_attr = 0;
     if (!eglQueryDisplayAttribEXT(display, EGL_DEVICE_EXT, &device_attr) ||
@@ -244,6 +244,8 @@ int funnel_buffer_get_egl_format(struct funnel_buffer *buf,
     case GBM_FORMAT_BGRX8888:
         *format = FUNNEL_EGL_FORMAT_RGB888;
         break;
+    default:
+        assert(0);
     }
     return 0;
 }
@@ -282,7 +284,7 @@ int funnel_buffer_set_release_egl_sync(struct funnel_buffer *buf,
     if (fd == EGL_NO_NATIVE_FENCE_FD_ANDROID) {
         pw_log_error("Unable to get the release sync fd, is this an "
                      "EGL_SYNC_NATIVE_FENCE_ANDROID?");
-        return -EINVAL;
+        return -EIO;
     }
 
     int ret = funnel_buffer_set_release_sync_file(buf, fd);

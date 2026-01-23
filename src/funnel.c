@@ -271,7 +271,7 @@ static int return_buffer(struct funnel_stream *stream,
                          struct funnel_buffer *buf) {
     if (!buf->pw_buffer) {
         funnel_buffer_free(buf);
-        return -ESTALE;
+        return 0;
     }
 
     return pw_stream_return_buffer(stream->stream, buf->pw_buffer);
@@ -999,8 +999,9 @@ int funnel_stream_configure(struct funnel_stream *stream) {
         return 0;
 
     if (stream->api == API_UNSET) {
-        pw_log_error("funnel_stream_set_size() must be called before "
+        pw_log_error("The API integration must be configured before "
                      "funnel_stream_configure()");
+        return -EINVAL;
     }
 
     if (!stream->config.width || !stream->config.width) {
@@ -1205,7 +1206,7 @@ int funnel_stream_dequeue(struct funnel_stream *stream,
 
     if (stream->buffers_dequeued > 0) {
         pw_log_error("libfunnel: Dequeueing multiple buffers not supported");
-        UNLOCK_RETURN(-EINVAL);
+        UNLOCK_RETURN(-EBUSY);
     }
 
     enum pw_stream_state state;
@@ -1285,7 +1286,7 @@ int funnel_stream_dequeue(struct funnel_stream *stream,
 
     *pbuf = buf;
 
-    UNLOCK_RETURN(0);
+    UNLOCK_RETURN(1);
 }
 static int funnel_stream_enqueue_internal(struct funnel_stream *stream,
                                           struct funnel_buffer *buf,
@@ -1353,7 +1354,7 @@ static int funnel_stream_enqueue_internal(struct funnel_stream *stream,
     if (stream->cur.config.mode == FUNNEL_ASYNC)
         pw_stream_trigger_process(stream->stream);
 
-    UNLOCK_RETURN(1);
+    UNLOCK_RETURN(valid ? 1 : 0);
 }
 
 int funnel_stream_enqueue(struct funnel_stream *stream,
@@ -1515,6 +1516,9 @@ int funnel_buffer_get_release_sync_object(struct funnel_buffer *buf,
 }
 
 int funnel_buffer_get_acquire_sync_file(struct funnel_buffer *buf, int *fd) {
+    if (!buf->frontend_sync)
+        return -EINVAL;
+
     *fd = -1;
 
     if (!buf->backend_sync) {

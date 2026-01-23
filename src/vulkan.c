@@ -90,7 +90,7 @@ int funnel_stream_vk_add_format(struct funnel_stream *stream, VkFormat format,
 
     uint32_t gbm_format = format_vk_to_gbm(format, alpha);
     if (!gbm_format)
-        return -EINVAL;
+        return -ENOTSUP;
 
     uint32_t count;
     if (get_modifiers(vks->physical_device, format, &count, NULL) < 0)
@@ -429,7 +429,7 @@ int funnel_buffer_get_vk_format(struct funnel_buffer *buf, VkFormat *format,
             *has_alpha = false;
         break;
     default:
-        return -EINVAL;
+        return -EIO;
     }
     return 0;
 }
@@ -444,6 +444,9 @@ static const struct funnel_stream_funcs vk_funcs = {
 int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
                               VkPhysicalDevice physical_device,
                               VkDevice device) {
+    if (stream->api != API_UNSET)
+        return -EEXIST;
+
     PFN_vkGetPhysicalDeviceProperties2KHR vkGetPhysicalDeviceProperties2KHR =
         (PFN_vkGetPhysicalDeviceProperties2KHR)vkGetInstanceProcAddr(
             instance, "vkGetPhysicalDeviceProperties2");
@@ -478,7 +481,7 @@ int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
         !vkGetImageMemoryRequirements2KHR || !vkGetSemaphoreFdKHR ||
         !vkImportSemaphoreFdKHR) {
         pw_log_error("Missing extensions");
-        return -ENODEV;
+        return -ENOTSUP;
     }
 
     VkPhysicalDeviceDrmPropertiesEXT drm_props = {
@@ -559,7 +562,7 @@ int funnel_buffer_get_vk_semaphores(struct funnel_buffer *buf,
 
     // Can only be called once per buffer
     if (buf->acquire.queried)
-        return -EINVAL;
+        return -EBUSY;
 
     // Wait for previous use to be complete
     buffer_wait_idle(vkbuf);
