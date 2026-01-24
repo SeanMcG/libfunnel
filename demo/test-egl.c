@@ -295,6 +295,9 @@ int main(int argc, char **argv) {
     ret = funnel_stream_egl_add_format(stream, FUNNEL_EGL_FORMAT_RGB888);
     assert(ret == 0);
 
+    ret = funnel_stream_configure(stream);
+    assert(ret == 0);
+
     ret = funnel_stream_start(stream);
     assert(ret == 0);
 

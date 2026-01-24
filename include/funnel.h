@@ -304,11 +304,9 @@ int funnel_stream_configure(struct funnel_stream *stream);
 /**
  * Start running a stream.
  *
- * Automatically calls funnel_stream_configure() if necessary.
- *
  * @param stream Stream @borrowed
  * @return_err
- * @retval -EINVAL The stream is in an invalid state (missing settings)
+ * @retval -EINVAL The stream is in an invalid state (not configured)
  * @retval -EIO The PipeWire context is invalid or stream creation failed
  */
 int funnel_stream_start(struct funnel_stream *stream);

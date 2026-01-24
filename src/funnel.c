@@ -1055,7 +1055,10 @@ int funnel_stream_configure(struct funnel_stream *stream) {
         assert(props);
 
         stream->stream = pw_stream_new(ctx->core, stream->name, props);
-        assert(stream->stream);
+        if (!stream->stream) {
+            pw_log_error("failed to create PW stream");
+            UNLOCK_RETURN(-EIO);
+        }
 
         pw_stream_add_listener(stream->stream, &stream->stream_listener,
                                &stream_events, stream);
@@ -1119,17 +1122,14 @@ int funnel_buffer_get_gbm_bo(struct funnel_buffer *buf, struct gbm_bo **bo) {
 }
 
 int funnel_stream_start(struct funnel_stream *stream) {
-    int ret = funnel_stream_configure(stream);
-    if (ret)
-        return ret;
-
-    assert(stream->stream);
-
     struct funnel_ctx *ctx = stream->ctx;
     pw_thread_loop_lock(ctx->loop);
 
     if (ctx->dead)
         UNLOCK_RETURN(-EIO);
+
+    if (!stream->stream)
+        UNLOCK_RETURN(-EINVAL);
 
     stream->active = true;
     UNLOCK_RETURN(pw_stream_set_active(stream->stream, true));

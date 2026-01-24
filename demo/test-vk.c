@@ -896,6 +896,9 @@ int main(int argc, char **argv) {
 
     assert(have_format);
 
+    ret = funnel_stream_configure(stream);
+    assert(ret == 0);
+
     ret = funnel_stream_start(stream);
     assert(ret == 0);
 
