@@ -544,6 +544,7 @@ static void on_process(void *data) {
         assert(buf->pw_buffer);
         pw_log_trace("Queued buffer");
         pw_stream_queue_buffer(stream->stream, buf->pw_buffer);
+        buf->sent_count++;
     } else if (stream->skip_buffer) {
         stream->skip_buffer = false;
     }

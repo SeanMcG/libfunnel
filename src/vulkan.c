@@ -23,6 +23,8 @@ struct funnel_vk_stream {
     PFN_vkGetImageMemoryRequirements2KHR vkGetImageMemoryRequirements2KHR;
     PFN_vkGetSemaphoreFdKHR vkGetSemaphoreFdKHR;
     PFN_vkImportSemaphoreFdKHR vkImportSemaphoreFdKHR;
+
+    bool dmabuf_workaround;
 };
 
 struct funnel_vk_buffer {
@@ -398,6 +400,16 @@ int funnel_vk_enqueue_buffer(struct funnel_buffer *buf) {
     vkbuf->last_sync_file = fd;
     vkbuf->fence_queried = false;
 
+    /// Nouveau/NVK dma-buf migration issue workaround
+    if (vks->dmabuf_workaround && buf->sent_count < 2) {
+        pw_log_info(
+            "Waiting for submission fence (NVK/Nouveau dma-buf workaround)");
+        if (vkWaitForFences(vks->device, 1, &vkbuf->fence, 1, UINT64_MAX) !=
+            VK_SUCCESS) {
+            pw_log_error("Failed to wait for submit fence");
+        }
+    }
+
     return ret;
 }
 
@@ -523,6 +535,8 @@ int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
         return -ENODEV;
     }
 
+    pw_log_info("Vulkan device name: %s", props2.properties.deviceName);
+
     pw_log_info("Render node %d:%d", (int)drm_props.renderMajor,
                 (int)drm_props.renderMinor);
 
@@ -565,6 +579,11 @@ int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
         pw_log_error("Vulkan requires explicit sync, but the driver does not "
                      "support it?");
         return ret;
+    }
+
+    if (strstr(props2.properties.deviceName, "NVK")) {
+        pw_log_info("Detected NVK: Enabling dma-buf workaround");
+        vks->dmabuf_workaround = true;
     }
 
     stream->funcs = &vk_funcs;
