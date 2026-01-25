@@ -230,7 +230,8 @@ int funnel_stream_set_mode(struct funnel_stream *stream, enum funnel_mode mode);
  * @param frontend Synchronization mode for the libfunnel API
  * @param backend Synchronization mode for the PipeWire stream
  * @return_err
- * @retval -EOPNOTSUPP The selected API does not support this sync mode
+ * @retval -EINVAL The selected sync combination is invalid for this API
+ * @retval -EOPNOTSUPP The API/driver does not support this sync mode
  */
 int funnel_stream_set_sync(struct funnel_stream *stream,
                            enum funnel_sync frontend, enum funnel_sync backend);

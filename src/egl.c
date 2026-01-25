@@ -148,6 +148,9 @@ int funnel_stream_init_egl(struct funnel_stream *stream, EGLDisplay display) {
         stream->api_supports_explicit_sync = false;
     stream->api_requires_explicit_sync = false;
 
+    pw_log_info("EGL explicit sync support: %s",
+                stream->api_supports_explicit_sync ? "yes" : "no");
+
     return 0;
 }
 

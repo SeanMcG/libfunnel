@@ -580,6 +580,9 @@ int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
     stream->config.vk_usage =
         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
+    stream->api_supports_explicit_sync = true;
+    stream->api_requires_explicit_sync = true;
+
     ret =
         funnel_stream_set_sync(stream, FUNNEL_SYNC_EXPLICIT, FUNNEL_SYNC_BOTH);
     if (ret < 0) {
@@ -596,8 +599,6 @@ int funnel_stream_init_vulkan(struct funnel_stream *stream, VkInstance instance,
     stream->funcs = &vk_funcs;
     stream->api = API_VULKAN;
     stream->api_ctx = vks;
-    stream->api_supports_explicit_sync = true;
-    stream->api_requires_explicit_sync = true;
 
     return 0;
 }
