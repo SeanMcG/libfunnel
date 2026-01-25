@@ -930,13 +930,13 @@ int funnel_stream_set_mode(struct funnel_stream *stream,
     switch (mode) {
     case FUNNEL_ASYNC:
     case FUNNEL_DOUBLE_BUFFERED:
-        stream->config.buffers.def = 5;
+        stream->config.buffers.def = 6;
         stream->config.buffers.min = 4;
         stream->config.buffers.max = 8;
         break;
     case FUNNEL_SINGLE_BUFFERED:
     case FUNNEL_SYNCHRONOUS:
-        stream->config.buffers.def = 4;
+        stream->config.buffers.def = 5;
         stream->config.buffers.min = 3;
         stream->config.buffers.max = 8;
         break;
