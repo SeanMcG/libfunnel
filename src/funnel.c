@@ -28,6 +28,7 @@
 #include <linux/dma-buf.h>
 #include <pipewire/log.h>
 #include <pipewire/pipewire.h>
+#include <pipewire/stream.h>
 #include <xf86drm.h>
 
 PW_LOG_TOPIC_STATIC(log_funnel, "funnel.core");
@@ -107,6 +108,11 @@ static const struct pw_core_events core_events = {
 
 static void on_add_buffer(void *data, struct pw_buffer *pwbuffer) {
     struct funnel_stream *stream = data;
+    const struct spa_buffer *spa_buffer = pwbuffer->buffer;
+
+    struct spa_meta_sync_timeline *stl;
+    stl = spa_buffer_find_meta_data(spa_buffer, SPA_META_SyncTimeline,
+                                    sizeof(*stl));
 
     struct spa_data *spa_data = pwbuffer->buffer->datas;
     assert(spa_data[0].type & (1 << SPA_DATA_DmaBuf));
@@ -127,11 +133,14 @@ static void on_add_buffer(void *data, struct pw_buffer *pwbuffer) {
     buffer->width = stream->cur.width;
     buffer->height = stream->cur.height;
 
-    buffer->backend_sync = false; // TODO
+    buffer->backend_sync = !!stl;
+    buffer->frontend_sync =
+        buffer->backend_sync ||
+        stream->cur.config.frontend_sync == FUNNEL_SYNC_EXPLICIT;
 
-    buffer->frontend_sync = buffer->backend_sync;
-    if (!buffer->backend_sync &&
-        stream->cur.config.frontend_sync == FUNNEL_SYNC_EXPLICIT) {
+    assert(buffer->frontend_sync || !buffer->backend_sync);
+
+    if (buffer->frontend_sync) {
         int fd = gbm_device_get_fd(stream->gbm);
 
         int ret = drmSyncobjCreate(fd, 0, &buffer->acquire.handle);
@@ -142,7 +151,6 @@ static void on_add_buffer(void *data, struct pw_buffer *pwbuffer) {
 
         buffer->acquire.point = 0;
         buffer->release.point = 0;
-        buffer->frontend_sync = true;
     }
 
     pw_log_debug("on_add_buffer: %p -> %p", pwbuffer, buffer);
@@ -173,6 +181,39 @@ static void on_add_buffer(void *data, struct pw_buffer *pwbuffer) {
     if (stream->alloc_cb)
         stream->alloc_cb(stream->cb_opaque, stream, buffer);
 
+    if (buffer->backend_sync) {
+        int fd = gbm_device_get_fd(stream->gbm);
+        int acquire_fd, release_fd;
+
+        int ret = drmSyncobjHandleToFD(fd, buffer->acquire.handle, &acquire_fd);
+        assert(ret >= 0);
+        ret = drmSyncobjHandleToFD(fd, buffer->release.handle, &release_fd);
+        assert(ret >= 0);
+
+        buffer->fds[stream->cur.plane_count] = acquire_fd;
+        buffer->fds[stream->cur.plane_count + 1] = release_fd;
+
+        struct spa_data *acquire_data = &spa_data[stream->cur.plane_count];
+        struct spa_data *release_data = &spa_data[stream->cur.plane_count + 1];
+
+        // The timelines are from the point of view of the *consumer*,
+        // so they are flipped here since we are the producer.
+        acquire_data->type = SPA_DATA_SyncObj;
+        acquire_data->flags = SPA_DATA_FLAG_READABLE;
+        acquire_data->fd = release_fd;
+
+        release_data->type = SPA_DATA_SyncObj;
+        release_data->flags = SPA_DATA_FLAG_READABLE;
+        release_data->fd = acquire_fd;
+
+        // Signal the first acquire sync point, so we can render
+        ret = drmSyncobjTimelineSignal(fd, &buffer->acquire.handle,
+                                       &buffer->acquire.point, 1);
+        assert(ret >= 0);
+    }
+
+    buffer->stl = stl;
+
     stream->num_buffers++;
 }
 
@@ -189,8 +230,7 @@ static void funnel_buffer_free(struct funnel_buffer *buffer) {
             close(buffer->fds[i]);
     }
 
-    if (!buffer->backend_sync &&
-        stream->cur.config.frontend_sync == FUNNEL_SYNC_EXPLICIT) {
+    if (buffer->frontend_sync) {
         int fd = gbm_device_get_fd(stream->gbm);
 
         int ret = drmSyncobjDestroy(fd, buffer->acquire.handle);
@@ -219,6 +259,13 @@ static void on_remove_buffer(void *data, struct pw_buffer *pwbuffer) {
             if (buffer == stream->pending_buffer)
                 stream->pending_buffer = NULL;
         } else {
+            if (buffer->backend_sync) {
+                int fd = gbm_device_get_fd(stream->gbm);
+                // Signal the acquire point, to unblock the dequeued buffer
+                int ret = drmSyncobjTimelineSignal(fd, &buffer->acquire.handle,
+                                                   &buffer->acquire.point, 1);
+                assert(ret >= 0);
+            }
             buffer->pw_buffer = NULL;
             pw_log_debug("defer buffer free: %p", buffer);
         }
@@ -472,24 +519,59 @@ static void on_param_changed(void *data, uint32_t id,
     int num_params = 0;
     const struct spa_pod *params[8];
 
-    // Fallback buffer parameters for DmaBuf with implicit sync or MemFd
-    spa_pod_builder_push_object(
-        &pod_builder.b, &f, SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers);
-    spa_pod_builder_add(
-        &pod_builder.b, SPA_PARAM_BUFFERS_buffers,
-        SPA_POD_CHOICE_RANGE_Int(stream->cur.config.buffers.def,
-                                 stream->cur.config.buffers.min,
-                                 stream->cur.config.buffers.max),
-        SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(buffertypes), 0);
-    spa_pod_builder_add(&pod_builder.b, SPA_PARAM_BUFFERS_blocks,
-                        SPA_POD_Int(stream->cur.plane_count), 0);
-    params[num_params++] =
-        (struct spa_pod *)spa_pod_builder_pop(&pod_builder.b, &f);
+    // Buffer parameters for dma-buf with explicit sync
+    if (stream->cur.config.backend_sync != FUNNEL_SYNC_IMPLICIT) {
+        spa_pod_builder_push_object(&pod_builder.b, &f,
+                                    SPA_TYPE_OBJECT_ParamBuffers,
+                                    SPA_PARAM_Buffers);
+        spa_pod_builder_add(
+            &pod_builder.b, SPA_PARAM_BUFFERS_buffers,
+            SPA_POD_CHOICE_RANGE_Int(stream->cur.config.buffers.def,
+                                     stream->cur.config.buffers.min,
+                                     stream->cur.config.buffers.max),
+            SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(buffertypes),
+            SPA_PARAM_BUFFERS_blocks, SPA_POD_Int(stream->cur.plane_count) + 2,
+            0);
+        spa_pod_builder_prop(&pod_builder.b, SPA_PARAM_BUFFERS_metaType,
+                             SPA_POD_PROP_FLAG_MANDATORY);
+        spa_pod_builder_int(&pod_builder.b, 1 << SPA_META_SyncTimeline);
+        params[num_params++] =
+            (struct spa_pod *)spa_pod_builder_pop(&pod_builder.b, &f);
+    }
+
+    // Buffer parameters for dma-buf with implicit sync
+    if (stream->cur.config.backend_sync != FUNNEL_SYNC_EXPLICIT) {
+        spa_pod_builder_push_object(&pod_builder.b, &f,
+                                    SPA_TYPE_OBJECT_ParamBuffers,
+                                    SPA_PARAM_Buffers);
+        spa_pod_builder_add(
+            &pod_builder.b, SPA_PARAM_BUFFERS_buffers,
+            SPA_POD_CHOICE_RANGE_Int(stream->cur.config.buffers.def,
+                                     stream->cur.config.buffers.min,
+                                     stream->cur.config.buffers.max),
+            SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(buffertypes),
+            0);
+        spa_pod_builder_add(&pod_builder.b, SPA_PARAM_BUFFERS_blocks,
+                            SPA_POD_Int(stream->cur.plane_count), 0);
+        params[num_params++] =
+            (struct spa_pod *)spa_pod_builder_pop(&pod_builder.b, &f);
+    }
 
     params[num_params++] = (struct spa_pod *)spa_pod_builder_add_object(
         &pod_builder.b, SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
         SPA_PARAM_META_type, SPA_POD_Id(SPA_META_Header), SPA_PARAM_META_size,
         SPA_POD_Int(sizeof(struct spa_meta_header)));
+
+    if (stream->cur.config.backend_sync != FUNNEL_SYNC_IMPLICIT) {
+        struct spa_pod_dynamic_builder pod_builder;
+        spa_pod_dynamic_builder_init(&pod_builder, NULL, 0, 1024);
+
+        params[num_params++] = (struct spa_pod *)spa_pod_builder_add_object(
+            &pod_builder.b, SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
+            SPA_PARAM_META_type, SPA_POD_Id(SPA_META_SyncTimeline),
+            SPA_PARAM_META_size,
+            SPA_POD_Int(sizeof(struct spa_meta_sync_timeline)));
+    }
 
     pw_stream_update_params(stream->stream, params, num_params);
     stream->cur.ready = true;
@@ -542,6 +624,21 @@ static void on_process(void *data) {
 
         assert(buf->pw_buffer);
         pw_log_trace("Queued buffer");
+        if (buf->backend_sync) {
+            // We are sending off this buffer, so we need a new acquire point
+            buf->acquire.point++;
+            // The consumer acquire point is our most recently used
+            // release point, which is the previous one (the current
+            // one is the *next* point).
+            buf->stl->acquire_point = buf->release.point - 1;
+            // The consumer release point is our new acquire point
+            buf->stl->release_point = buf->acquire.point;
+            pw_log_trace(
+                "Buffer consumer acquire/release points: 0x%x:%lld, 0x%x:%lld",
+                buf->release.handle,
+                (long long)buf->stl->acquire_point, buf->acquire.handle,
+                (long long)buf->stl->release_point);
+        }
         pw_stream_queue_buffer(stream->stream, buf->pw_buffer);
         buf->sent_count++;
     } else if (stream->skip_buffer) {
@@ -1347,8 +1444,8 @@ int funnel_stream_dequeue(struct funnel_stream *stream,
         if (stream->cur.config.mode == FUNNEL_SYNCHRONOUS &&
             stream->cycle_state != SYNC_CYCLE_ACTIVE) {
             /*
-             * Tell the process callback that we are ready to start processing
-             * a frame.
+             * Tell the process callback that we are ready to start
+             * processing a frame.
              */
             pw_log_trace("## Wait for process (sync)");
             stream->cycle_state = SYNC_CYCLE_WAITING;
@@ -1498,7 +1595,7 @@ int funnel_stream_enqueue(struct funnel_stream *stream,
                 buf->stream, buf->release.handle, buf->release.point, &fd);
             if (ret) {
                 pw_log_error(
-                    "Failed to export sync, did you commmit the timeline "
+                    "Failed to export sync, did you commit the timeline "
                     "point? (handle = %d, point=%lld)",
                     buf->release.handle, (long long)buf->release.point);
                 UNLOCK_RETURN(-errno);
@@ -1515,6 +1612,8 @@ int funnel_stream_enqueue(struct funnel_stream *stream,
             ret = drmIoctl(buf->fds[0], DMA_BUF_IOCTL_IMPORT_SYNC_FILE, &args);
             assert(ret >= 0);
             close(args.fd);
+        } else if (buf->backend_sync) {
+            buf->release.point++;
         }
     }
 
@@ -1586,6 +1685,7 @@ int funnel_buffer_get_acquire_sync_object(struct funnel_buffer *buf,
 
     *handle = buf->acquire.handle;
     *point = buf->acquire.point;
+    pw_log_trace("Acquire sync point: 0x%x/%lld", *handle, (long long)*point);
 
     if (!buf->backend_sync) {
         struct dma_buf_export_sync_file args = {
@@ -1619,6 +1719,7 @@ int funnel_buffer_get_release_sync_object(struct funnel_buffer *buf,
 
     *handle = buf->release.handle;
     *point = buf->release.point;
+    pw_log_trace("Release sync point: 0x%x/%lld", *handle, (long long)*point);
 
     buf->release.queried = true;
     return 0;
@@ -1641,6 +1742,8 @@ int funnel_buffer_get_acquire_sync_file(struct funnel_buffer *buf, int *fd) {
 
         *fd = args.fd;
     } else {
+        pw_log_trace("Acquire sync point: 0x%x/%lld", buf->acquire.handle,
+                     (long long)buf->acquire.point);
         int gbm_fd = gbm_device_get_fd(buf->stream->gbm);
         int ret = drmSyncobjTimelineWait(
             gbm_fd, &buf->acquire.handle, &buf->acquire.point, 1, INT64_MAX,
@@ -1677,6 +1780,8 @@ int funnel_buffer_set_release_sync_file(struct funnel_buffer *buf, int fd) {
         int ret = drmIoctl(buf->fds[0], DMA_BUF_IOCTL_IMPORT_SYNC_FILE, &args);
         assert(ret >= 0);
     } else {
+        pw_log_trace("Release sync point: 0x%x/%lld", buf->release.handle,
+                     (long long)buf->release.point);
         int ret = funnel_stream_import_sync_file(
             buf->stream, buf->release.handle, fd, buf->release.point);
         if (ret < 0)

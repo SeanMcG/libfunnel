@@ -142,6 +142,7 @@ struct funnel_stream {
 struct funnel_buffer {
     struct funnel_stream *stream;
     struct pw_buffer *pw_buffer;
+    struct spa_meta_sync_timeline *stl;
     bool dequeued;
     bool driving;
     uint32_t width;
